@@ -1,9 +1,9 @@
-# TMS
-alterantive of chat gpt
-https://www.perplexity.ai/
-https://www.meta.ai/
-https://www.nomic.ai/gpt4all
-
-no limit and free
-https://chat.mistral.ai/
-https://poe.com/
+# TMS<br>
+alterantive of chat gpt<br>
+https://www.perplexity.ai/<br>
+https://www.meta.ai/<br>
+https://www.nomic.ai/gpt4all<br>
+<br>
+no limit and free<br>
+https://chat.mistral.ai/<br>
+https://poe.com/<br>
