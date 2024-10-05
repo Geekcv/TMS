@@ -1,0 +1,150 @@
+-- Table for storing tasks
+CREATE TABLE tasks800 (
+    id SERIAL PRIMARY KEY,
+    task_name VARCHAR(255) NOT NULL,     -- Task title
+    task_description TEXT,              -- Task description
+    created_by VARCHAR(255) NOT NULL,    -- Who created the task
+    completion_date DATE,               -- Deadline for the task
+    is_recurring BOOLEAN DEFAULT FALSE,  -- Is it a recurring task? (true/false)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table for storing task assignments (many-to-many relationship)
+CREATE TABLE task_assignments (
+    id SERIAL PRIMARY KEY,
+    task_id INT REFERENCES tasks800(id) ON DELETE CASCADE,  -- Links to the task
+    assigned_to VARCHAR(255)                             -- User assigned to the task
+);
+
+-- Table for storing recurring task details
+CREATE TABLE recurring_tasks800 (
+    id SERIAL PRIMARY KEY,
+    task_id INT REFERENCES tasks800(id) ON DELETE CASCADE,  -- Links to the task
+    repeat_schedule VARCHAR(50) NOT NULL,                -- Schedule (Daily, Weekly, etc.)
+    repeat_day VARCHAR(20),                              -- Day of the week (e.g., Monday)
+    repeat_time TIME NOT NULL                            -- Time for task creation
+);
+
+
+
+
+-- Insert a task into the tasks table
+INSERT INTO tasks800 (task_name, task_description, created_by, completion_date, is_recurring)
+VALUES ('Daily Repor 123t', 'Generate a daily report', 'admin', '2024-12-31', true);
+
+-- Insert a recurring task entry for a daily report at 10:00 AM on weekdays
+INSERT INTO recurring_tasks800 (task_id, repeat_schedule, repeat_day, repeat_time)
+VALUES (4, 'Weekly', 'Saturday', '16:21:00');
+
+
+
+
+-- Update recurring task entry to trigger on Saturday at 16:07
+UPDATE recurring_tasks800
+SET repeat_day = 'Saturday',
+    repeat_time = '16:25:00'
+WHERE task_id = 4;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import express from "express";
+import cron from "node-cron";
+// import { Pool } from "pg";
+import moment from "moment";
+
+import pkg from "pg"; // Default import of the whole 'pg' package
+const { Pool } = pkg; // Destructure 'Pool' from the package
+
+const pool = new Pool({
+  user: "postgres",
+  host: "localhost",
+  database: "Prosys",
+  password: "Admin",
+  port: 5432,
+});
+
+// Function to query the database
+async function query(text, params) {
+  const res = await pool.query(text, params);
+  return res;
+}
+
+// Function to create a task
+async function createTask(task) {
+  const {
+    task_name,
+    task_description,
+    created_by,
+    completion_date,
+    is_recurring,
+  } = task;
+  const res = await query(
+    `INSERT INTO tasks800 (task_name, task_description, created_by, completion_date, is_recurring)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [task_name, task_description, created_by, completion_date, is_recurring]
+  );
+  return res.rows[0];
+}
+
+// Function to assign a task
+async function assignTask(taskId, assignedTo) {
+  await query(
+    `INSERT INTO task_assignments (task_id, assigned_to) VALUES ($1, $2) RETURNING *`,
+    [taskId, assignedTo]
+  );
+}
+
+// Cron job that runs every 5 minutes
+cron.schedule("* * * * * *", async () => {
+  try {
+    const currentDay = moment().format("dddd"); // E.g., 'Monday'
+    const currentTime = moment().format("HH:mm:ss"); // E.g., '10:00:00'
+
+    console.log(currentDay, currentTime);
+
+    // Query recurring tasks that should be created now
+    const recurringTasks = await query(
+      `SELECT rt.task_id, t.task_name, t.task_description, t.created_by, t.completion_date
+             FROM recurring_tasks800 rt
+             JOIN tasks800 t ON rt.task_id = t.id
+             WHERE rt.repeat_day = $1 AND rt.repeat_time = $2`,
+      [currentDay, currentTime]
+    );
+
+    // console.log(recurringTasks);
+
+    if (recurringTasks.rows.length > 0) {
+      for (const task of recurringTasks.rows) {
+        // Create a new instance of the task
+        const newTask = await createTask(task);
+
+        // Assign the new task to a user (you can expand logic to select different users)
+        await assignTask(newTask.id, "some_user");
+        console.log(`Task "${newTask.task_name}" created and assigned`);
+      }
+    } else {
+      console.log("No tasks to create at this time.");
+    }
+  } catch (err) {
+    console.error("Error running cron job:", err);
+  }
+});
+
+
