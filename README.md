@@ -10,89 +10,80 @@ https://poe.com/<br>
 
 
 
-SELECT task_name, 
-       completion_date, 
-       (completion_date - CURRENT_DATE) AS due_days
-FROM tasks;
+function createSingleTask1(taskData, departmentId, createdBy) {
+    return new Promise((resolve) => {
+        const { 
+            assigned_to = [], 
+            title, 
+            description, 
+            status, 
+            completion_date, 
+            temp_task_id, 
+            temp_dependencies_task_id, 
+            is_recurring = 'false', 
+            repeat_schedule, 
+            repeat_time, 
+            days, 
+            month, 
+            date, 
+            year 
+        } = taskData;
 
+        // Validate required fields for individual task
+        if (!Array.isArray(assigned_to) || assigned_to.length === 0 || !title || !description || !status || !completion_date) {
+            return resolve({ status: 1, msg: "Missing required fields for a task" });
+        }
+        
+        // Generate a unique ID for the new task
+        const row_id = libFunc.randomid();
+        
+        if (is_recurring === 'true') {
+            // Insert the new task into the recurring_tasks table
+            const insertRecurringTaskQuery = `
+                INSERT INTO ${schema}.recurring_tasks (row_id, task_id, repeat_schedule, repeat_time, days, month, date, created_by, assigned_to, title, description, status, completion_date) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13)
+            `;
 
+            connect_db.query(insertRecurringTaskQuery, 
+                [row_id, row_id, repeat_schedule, repeat_time, days, month, date, createdBy, assigned_to, title, description, status, completion_date], 
+                (err, result) => {
+                    if (err) {
+                        console.error("Error creating recurring task:", err);
+                        return resolve({ status: 1, msg: "Recurring task not created", data: err.detail });
+                    }
+                    
+                    resolve({ status: 0, msg: "Recurring task created successfully", data: row_id });
+                }
+            );
+        } else {
+            // Insert the new task into the tasks table
+            const insertTaskQuery = `
+                INSERT INTO ${schema}.tasks (row_id, created_by, title, description, status, completion_date, temp_task_id, temp_dependencies_task_id, is_recurring, department_id) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10) RETURNING row_id
+            `;
 
-const express = require('express');
-const { Pool } = require('pg');
-const app = express();
+            connect_db.query(insertTaskQuery, 
+                [row_id, createdBy, title, description, status, completion_date, temp_task_id, temp_dependencies_task_id, is_recurring === 'true', departmentId], 
+                (err, result) => {
+                    if (err) {
+                        console.error("Error creating task:", err);
+                        return resolve({ status: 1, msg: "Task not created", data: err.detail });
+                    }
 
-app.use(express.json());
+                    const task_id = result.rows[0].row_id; // Get the newly created task ID
 
-// PostgreSQL database connection
-const pool = new Pool({
-  user: 'your-username',
-  host: 'localhost',
-  database: 'your-database',
-  password: 'your-password',
-  port: 5432,
-});
+                    // Create assignments and notifications for each user
+                    let assignmentPromises = assigned_to.map(user => createAssignmentAndNotify(user.trim(), task_id, createdBy));
 
-// Helper function to calculate due days
-function calculateDueDays(completionDate) {
-  const currentDate = new Date();
-  const dueDate = new Date(completionDate);
-  
-  // Calculate the difference in time
-  const timeDiff = dueDate.getTime() - currentDate.getTime();
-  
-  // Convert time difference to days
-  const dueDays = Math.ceil(timeDiff / (1000 * 3600 * 24)); // Convert milliseconds to days
+                    Promise.all(assignmentPromises).then(results => {
+                        if (results.includes(false)) {
+                            return resolve({ status: 1, msg: "Some assignments failed." });
+                        }
 
-  return dueDays;
-}
-
-// Route to get tasks with due days
-app.get('/tasks', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM tasks');
-    const tasks = result.rows;
-
-    // Add due days to each task
-    tasks.forEach(task => {
-      task.due_days = calculateDueDays(task.completion_date);
+                        resolve({ status: 0, msg: "Task created successfully", data: task_id });
+                    });
+                }
+            );
+        }
     });
-
-    res.status(200).json(tasks);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error retrieving tasks' });
-  }
-});
-
-// Start the server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
-
-
-
-[
-  {
-    "task_id": 1,
-    "assigned_to": 2,
-    "task_name": "Complete project report",
-    "task_description": "Finish the project report by the end of the week",
-    "completion_date": "2024-10-10",
-    "is_recurring": false,
-    "created_at": "2024-09-30T10:00:00.000Z",
-    "updated_at": "2024-09-30T10:00:00.000Z",
-    "due_days": 10
-  },
-  {
-    "task_id": 2,
-    "assigned_to": 1,
-    "task_name": "Prepare presentation",
-    "task_description": "Prepare the presentation for the client",
-    "completion_date": "2024-09-25",
-    "is_recurring": false,
-    "created_at": "2024-09-01T10:00:00.000Z",
-    "updated_at": "2024-09-01T10:00:00.000Z",
-    "due_days": -5  // Overdue by 5 days
-  }
-]
+}
