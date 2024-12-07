@@ -166,3 +166,8 @@ CREATE TABLE prosys.days_of_week (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+
+
+repeat_time BETWEEN '00:00:00' AND '23:59:59'
+
+
