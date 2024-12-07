@@ -155,3 +155,14 @@ cron.schedule('0 10 * * *', () => {
         }
     });
 });
+
+
+
+CREATE TABLE prosys.days_of_week (
+  row_id VARCHAR(255) PRIMARY KEY,
+  days_name VARCHAR(100),
+  code INT, -- 0: Sunday, 1: Monday, ..., 6: Saturday
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
