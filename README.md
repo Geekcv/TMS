@@ -1,4 +1,4 @@
-# TMS<br>
+ki# TMS<br>
 alterantive of chat gpt<br>
 https://www.perplexity.ai/<br>
 https://www.meta.ai/<br>
@@ -7,6 +7,97 @@ https://www.nomic.ai/gpt4all<br>
 no limit and free<br>
 https://chat.mistral.ai/<br>
 https://poe.com/<br>
+
+
+const express = require("express");
+const axios = require("axios");
+const { Pool } = require("pg");
+require("dotenv").config();
+
+const app = express();
+app.use(express.json());
+
+// PostgreSQL connection
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT,
+});
+
+// Login endpoint
+app.post("/api/login", async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password are required." });
+  }
+
+  try {
+    // Step 1: Authenticate user via external login API
+    const externalLoginResponse = await axios.post(process.env.EXTERNAL_LOGIN_URL, {
+      email,
+      password,
+    });
+
+    if (externalLoginResponse.data.success) {
+      const externalUserId = externalLoginResponse.data.userId;
+
+      // Step 2: Check if user exists in the local database
+      const userCheck = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+
+      if (userCheck.rows.length === 0) {
+        // Step 3: If user doesn't exist, fetch details from external API
+        const externalUserResponse = await axios.get(
+          `${process.env.EXTERNAL_USER_DETAILS_URL}/${externalUserId}`
+        );
+
+        if (externalUserResponse.data.exists) {
+          const { id, name, email, payment_status } = externalUserResponse.data;
+
+          // Step 4: Insert user into local database
+          await pool.query(
+            "INSERT INTO users (id, name, email, payment_status) VALUES ($1, $2, $3, $4)",
+            [id, name, email, payment_status || "pending"]
+          );
+
+          return res.status(201).json({
+            success: true,
+            message: "User created successfully. Payment status: pending.",
+          });
+        } else {
+          return res.status(404).json({ error: "User not found in external system." });
+        }
+      } else {
+        // Step 5: If user exists, check payment status
+        const paymentStatus = userCheck.rows[0].payment_status;
+
+        if (paymentStatus === "done") {
+          return res.json({ success: true, message: "Login successful. Payment verified." });
+        } else {
+          return res.status(403).json({ success: false, message: "Payment not done." });
+        }
+      }
+    } else {
+      // Login failed
+      return res.status(401).json({ success: false, message: "Invalid credentials." });
+    }
+  } catch (error) {
+    console.error("Error:", error.message);
+    return res.status(500).json({ error: "An error occurred." });
+  }
+});
+
+// Server setup
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+
+
+
 
 
 
