@@ -262,3 +262,89 @@ CREATE TABLE prosys.days_of_week (
 repeat_time BETWEEN '00:00:00' AND '23:59:59'
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const arrSet1 = [
+  { row_id: "1733375828675_ItHx", user: "User 1", month: "Jan", value: "13004" },
+  { row_id: "1725265476233_7k5a", user: "User 2", month: "Feb", value: "12995" },
+  { row_id: "1725949511063_QRCu", user: "User 3", month: "Feb", value: "13004" },
+  { row_id: "1725950388957_4P11", user: "User 4", month: "Mar", value: "16278" },
+  { row_id: "1726048492082_N74t", user: "User 5", month: "Apr", value: "9854" },
+  { row_id: "1726574992254_tL1Q", user: "User 6", month: "May", value: "11025" },
+  { row_id: "1726811711126_aimY", user: "User 7", month: "June", value: "13070" },
+  { row_id: "1734352831093_2pg6", assign_to: "User 8", month: "July", value: "6475" },
+  { row_id: "1725949511947_Akhr", user: "User 9", month: "Aug", value: "12074" },
+  { row_id: "1725363693591_rj3n", user: "User 10", month: "Sept", value: "11025" },
+  { row_id: "1725363693937_X8cn", user: "User 11", month: "Oct", value: "15036" },
+  { row_id: "1734352831093_2pg6", assign_to: "User 8", month: "Nov", value: "13745" },
+  { row_id: "1725363693945_4Xz2", user: "User 12", month: "Dec", value: "8045" },
+];
+
+const arrSet2 = [
+  { row_id: "1726811711126_aimY", user: "User 7", month: "June", value: "12498" },
+  { row_id: "1734352831093_2pg6", user: "User 8", month: "July", value: "7458" },
+  { row_id: "1725949511063_QRCu", user: "User 3", month: "Mar", value: "13547" },
+];
+
+// Function to update the array
+function updateArray(original, corrections) {
+  return original.map(item => {
+    // Find the matching correction by row_id
+    const correction = corrections.find(c => c.row_id === item.row_id);
+
+    // If a correction exists, use its data to update the item
+    return correction ? { ...item, ...correction } : item;
+  });
+}
+
+// Get the updated array
+const updatedArray = updateArray(arrSet1, arrSet2);
+
+console.log(updatedArray);
+
+
+
+
+
+// Predefined Numbers
+let num1 = 15;
+let num2 = 5;
+
+// 1. Comparison Operations
+console.log("Comparison Operations:");
+console.log(`Is num1 equal to num2? ${num1 === num2}`);
+console.log(`Is num1 not equal to num2? ${num1 !== num2}`);
+console.log(`Is num1 greater than num2? ${num1 > num2}`);
+console.log(`Is num1 less than num2? ${num1 < num2}`);
+console.log(`Is num1 greater than or equal to num2? ${num1 >= num2}`);
+console.log(`Is num1 less than or equal to num2? ${num1 <= num2}`);
+
+// 2. Logical Operations:
+console.log("\nLogical Operations:");
+// a) Check if both numbers are positive
+let bothPositive = (num1 > 0 && num2 > 0);
+console.log(`Are both numbers positive? ${bothPositive}`);
+
+// b) Check if at least one number is greater than 10
+let atLeastOneGreaterThanTen = (num1 > 10 || num2 > 10);
+console.log(`Is at least one number greater than 10? ${atLeastOneGreaterThanTen}`);
+
+// c) Check if neither number is negative
+let neitherNegative = (num1 >= 0 && num2 >= 0);
+console.log(`Are neither numbers negative? ${neitherNegative}`);
+
+
+
