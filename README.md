@@ -94,3 +94,22 @@ namespace NodeCommandApp
         }
     }
 }
+
+
+
+
+<Window x:Class="NodeCommandApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Node.js Command App" Height="300" Width="400">
+    <Grid>
+        <!-- Start/Stop Button -->
+        <Button x:Name="StartStopButton" Content="Start Node.js" Width="120" Height="40" HorizontalAlignment="Center" VerticalAlignment="Center" Click="StartStopButton_Click"/>
+        
+        <!-- Status Indicator -->
+        <Ellipse x:Name="StatusIndicator" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Top" Fill="Red" Margin="0,20,0,0"/>
+
+        <!-- Minimize to Arrow Icon Button -->
+        <Button x:Name="MinimizeButton" Content="➤" Width="40" Height="40" HorizontalAlignment="Right" VerticalAlignment="Bottom" Click="MinimizeButton_Click"/>
+    </Grid>
+</Window>
