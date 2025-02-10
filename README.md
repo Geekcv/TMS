@@ -2,23 +2,32 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Billing System" Height="600" Width="900">
-    
-    <Grid>
-        <!-- Top Menu Bar -->
-        <Menu Background="Blue" Height="40">
-            <MenuItem Header="Quick Menu"/>
-            <MenuItem Header="Invoice"/>
-            <MenuItem Header="Price List"/>
-            <MenuItem Header="Sale Order"/>
-            <MenuItem Header="Inventory"/>
-            <MenuItem Header="Checker"/>
-            <MenuItem Header="Licensing"/>
-            <MenuItem Header="Reports"/>
-            <MenuItem Header="Barcode Generator"/>
-        </Menu>
 
-        <!-- Main Layout -->
-        <Grid Margin="10,50,10,10">
+    <Grid>
+        <!-- Main Menu Bar -->
+        <StackPanel Orientation="Horizontal" Background="Blue" Height="40">
+            <Button Content="Quick Menu" Foreground="White" Background="Transparent" Click="ToggleQuickMenu"/>
+            <Button Content="Invoice" Foreground="White" Background="Transparent"/>
+            <Button Content="Price List" Foreground="White" Background="Transparent"/>
+            <Button Content="Sale Order" Foreground="White" Background="Transparent"/>
+            <Button Content="Inventory" Foreground="White" Background="Transparent"/>
+            <Button Content="Checker" Foreground="White" Background="Transparent"/>
+            <Button Content="Licensing" Foreground="White" Background="Transparent"/>
+            <Button Content="Reports" Foreground="White" Background="Transparent"/>
+            <Button Content="Barcode Generator" Foreground="White" Background="Transparent"/>
+        </StackPanel>
+
+        <!-- Quick Menu Options -->
+        <StackPanel Name="QuickMenuPanel" Background="LightGray" Width="150" Visibility="Collapsed" VerticalAlignment="Top" Margin="10,50,0,0">
+            <Button Content="POS Billing" Click="POSBilling_Click"/>
+            <Button Content="Previous Bill" Click="PreviousBill_Click"/>
+            <Button Content="Item Summary" Click="ItemSummary_Click"/>
+            <Button Content="Payment History" Click="PaymentHistory_Click"/>
+            <Button Content="Order" Click="Order_Click"/>
+        </StackPanel>
+
+        <!-- Rest of the UI Layout -->
+        <Grid Margin="10,90,10,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="2*" />
                 <ColumnDefinition Width="1*" />
@@ -27,16 +36,14 @@
             <!-- Left Section (Bill Details) -->
             <Border Grid.Column="0" BorderBrush="Black" BorderThickness="1" Padding="10">
                 <StackPanel>
-                    <!-- Filters -->
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                         <Label Content="Date:"/>
-                        <DatePicker Width="120" SelectedDate="{x:Static sys:DateTime.Now}" />
+                        <DatePicker Width="120" />
                         <Label Content="Invoice No:" Margin="10,0,0,0"/>
                         <TextBox Width="120"/>
                         <Button Content="🔍" Width="30" />
                     </StackPanel>
 
-                    <!-- Data Grid -->
                     <DataGrid Name="BillsDataGrid" AutoGenerateColumns="False" Height="300">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Date" Binding="{Binding Date}" Width="Auto"/>
@@ -47,7 +54,6 @@
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <!-- Action Buttons -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="10">
                         <Button Content="Edit" Width="80" Background="Orange"/>
                         <Button Content="Exit" Width="80" Margin="10,0,10,0"/>
