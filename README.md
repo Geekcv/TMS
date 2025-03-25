@@ -52,3 +52,27 @@
     <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
   </table>
 </div>
+
+
+
+
+.table-container {
+  max-height: 400px; /* Adjust as needed */
+  overflow-y: auto;
+  display: block;
+}
+
+table {
+  width: 100%;
+}
+
+.action-buttons {
+  display: flex;
+  flex-direction: column; /* Stack buttons */
+  gap: 5px; /* Add spacing between buttons */
+}
+
+.mat-icon-button {
+  width: 36px; /* Set fixed width */
+  height: 36px;
+}
