@@ -1,41 +1,7 @@
-<div class="table-container">
-  <table mat-table [dataSource]="dataSource" matSort class="mat-elevation-z8">
-
-    <!-- Columns Definition -->
-    <ng-container matColumnDef="id">
-      <th mat-header-cell *matHeaderCellDef>#</th>
-      <td mat-cell *matCellDef="let element">{{ element.id }}</td>
-    </ng-container>
-
-    <ng-container matColumnDef="name">
-      <th mat-header-cell *matHeaderCellDef>Name</th>
-      <td mat-cell *matCellDef="let element">{{ element.name }}</td>
-    </ng-container>
-
-    <ng-container matColumnDef="email">
-      <th mat-header-cell *matHeaderCellDef>Email</th>
-      <td mat-cell *matCellDef="let element">{{ element.email }}</td>
-    </ng-container>
-
-    <ng-container matColumnDef="phone">
-      <th mat-header-cell *matHeaderCellDef>Phone/Mobile</th>
-      <td mat-cell *matCellDef="let element">{{ element.phone }}</td>
-    </ng-container>
-
-    <ng-container matColumnDef="qualifications">
-      <th mat-header-cell *matHeaderCellDef>Qualifications</th>
-      <td mat-cell *matCellDef="let element">{{ element.qualifications }}</td>
-    </ng-container>
-
-    <ng-container matColumnDef="qualificationDetails">
-      <th mat-header-cell *matHeaderCellDef>Qualification Details</th>
-      <td mat-cell *matCellDef="let element">{{ element.qualificationDetails }}</td>
-    </ng-container>
-
-    <!-- Actions Column (Stacked) -->
-    <ng-container matColumnDef="actions">
-      <th mat-header-cell *matHeaderCellDef>Actions</th>
-      <td mat-cell *matCellDef="let element">
+!-- Actions Column (Fixed) -->
+    <ng-container matColumnDef="actions" stickyEnd>
+      <th mat-header-cell *matHeaderCellDef class="sticky-column">Actions</th>
+      <td mat-cell *matCellDef="let element" class="sticky-column">
         <div class="action-buttons">
           <button mat-icon-button color="primary">
             <mat-icon>visibility</mat-icon>
@@ -45,34 +11,42 @@
           </button>
         </div>
       </td>
-    </ng-container>
-
-    <!-- Table Headers & Rows -->
-    <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
-    <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
-  </table>
-</div>
+    </ng-container
 
 
-
-
+    /* Table Container with Vertical Scrolling */
 .table-container {
   max-height: 400px; /* Adjust as needed */
   overflow-y: auto;
   display: block;
+  position: relative;
 }
 
+/* Ensures the table takes the full width */
 table {
   width: 100%;
 }
 
+/* Sticky column for Actions */
+.sticky-column {
+  position: sticky;
+  right: 0;
+  background: white; /* Ensures it doesn't overlap */
+  z-index: 2; /* Keeps it above other content */
+  box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+}
+
+/* Stack action buttons */
 .action-buttons {
   display: flex;
   flex-direction: column; /* Stack buttons */
-  gap: 5px; /* Add spacing between buttons */
+  gap: 5px; /* Adds spacing between buttons */
+  align-items: center; /* Centers buttons */
 }
 
+/* Ensures action buttons remain visible */
 .mat-icon-button {
-  width: 36px; /* Set fixed width */
+  width: 36px; /* Set a fixed width */
   height: 36px;
 }
+  
