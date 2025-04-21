@@ -1,97 +1,151 @@
-const express = require("express");
-const multer = require("multer");
-const fs = require("fs");
-const cors = require("cors");
+CREATE TABLE students (
+    student_id SERIAL PRIMARY KEY,
+    roll_no VARCHAR(20) NOT NULL,
+    student_name VARCHAR(100) NOT NULL,
+    father_name VARCHAR(100) NOT NULL,
+    dob DATE,
+    mobile VARCHAR(15),
+    address TEXT,
+    state VARCHAR(50),
+    city VARCHAR(50),
+    zip_code VARCHAR(10),
+    adhaar_no VARCHAR(12),
+    phone_r VARCHAR(15),
+    phone_o VARCHAR(15),
+    medium VARCHAR(50),
+    education VARCHAR(50),
+    account_no VARCHAR(20),
+    account_name VARCHAR(100),
+    bank_name VARCHAR(100),
+    branch_name VARCHAR(100),
+    ifsc_code VARCHAR(20),
+    remarks TEXT,
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-const app = express();
-const PORT = 3000;
+CREATE TABLE attendance (
+    attendance_id SERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(student_id) ON DELETE CASCADE,
+    exam_session VARCHAR(50),
+    class VARCHAR(50),
+    center_code VARCHAR(50),
+    status VARCHAR(20), -- Present, Absent, Exam Reject
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static("uploads")); // Serve uploaded files
+CREATE TABLE copy_checkers (
+    checker_id SERIAL PRIMARY KEY,
+    checker_name VARCHAR(100),
+    email VARCHAR(100),
+    phone VARCHAR(15),
+    assigned_bandal INT, -- Bandal number assigned
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-// Helper: Ensure directory exists
-const ensureDir = (dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-};
 
-// Helper: Format file size
-const formatFileSize = (bytes) => {
-  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + " MB";
-  if (bytes >= 1024) return (bytes / 1024).toFixed(2) + " KB";
-  return bytes + " bytes";
-};
+CREATE TABLE bandals (
+    bandal_id SERIAL PRIMARY KEY,
+    bandal_no VARCHAR(50) UNIQUE NOT NULL, -- System-generated
+    exam_session VARCHAR(50),
+    class VARCHAR(50),
+    center_code VARCHAR(50),
+    copy_checker_id INT REFERENCES copy_checkers(checker_id) ON DELETE SET NULL,
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-// Multer storage config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    let uploadPath = "uploads/others";
 
-    if (file.mimetype.startsWith("image/")) {
-      uploadPath = "uploads/images";
-    } else if (file.mimetype.startsWith("audio/")) {
-      uploadPath = "uploads/audio";
-    } else if (file.mimetype.startsWith("video/")) {
-      uploadPath = "uploads/video";
-    } else if (file.mimetype === "application/pdf") {
-      uploadPath = "uploads/pdf";
-    } else if (
-      file.mimetype === "application/msword" ||
-      file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-      file.mimetype === "application/vnd.ms-excel" ||
-      file.mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-      file.mimetype === "text/plain"
-    ) {
-      uploadPath = "uploads/documents";
-    }
+CREATE TABLE marks (
+    marks_id SERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(student_id) ON DELETE CASCADE,
+    exam_session VARCHAR(50),
+    bandal_no VARCHAR(50),
+    marks INT,
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-    ensureDir(uploadPath);
-    cb(null, uploadPath);
-  },
+CREATE TABLE merit_list (
+    merit_id SERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(student_id) ON DELETE CASCADE,
+    marks INT,
+    rank INT,
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-  filename: (req, file, cb) => {
-    const uniqueName = Date.now() + "-" + file.originalname;
-    cb(null, uniqueName);
-  }
-});
 
-const upload = multer({ storage });
+CREATE TABLE birthday_sms (
+    sms_id SERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(student_id) ON DELETE CASCADE,
+    send_date DATE,
+    status VARCHAR(20), -- Sent, Pending
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-// Upload route
-app.post("/upload", upload.single("file"), (req, res) => {
-  try {
-    const file = req.file;
 
-    if (!file) {
-      return res.status(400).send({ status: false, message: "No file uploaded." });
-    }
+CREATE TABLE online_forms (
+    form_id SERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(student_id) ON DELETE CASCADE,
+    form_name VARCHAR(100),
+    form_data JSONB, -- To store form data in JSON format
+    status VARCHAR(20), -- Approved, Rejected, Pending
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-    const response = {
-      status: true,
-      message: "File uploaded successfully",
-      data: {
-        fieldname: file.fieldname,
-        originalname: file.originalname,
-        encoding: file.encoding,
-        mimetype: file.mimetype,
-        destination: file.destination,
-        filename: file.filename,
-        path: file.path,
-        size: formatFileSize(file.size),
-        rawSize: file.size
-      }
-    };
+CREATE TABLE reports (
+    report_id SERIAL PRIMARY KEY,
+    report_name VARCHAR(100),
+    filter_criteria JSONB, -- To store filter criteria as JSON
+    generated_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    export_format VARCHAR(20) -- PDF, Excel
+);
 
-    console.log("File Metadata:", response.data);
-    res.send(response);
-  } catch (err) {
-    console.error("Upload error:", err);
-    res.status(500).send({ status: false, message: "Server error", error: err });
-  }
-});
+CREATE TABLE certificates (
+    certificate_id SERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(student_id) ON DELETE CASCADE,
+    exam_session VARCHAR(50),
+    certificate_type VARCHAR(50), -- e.g., "Completion Certificate"
+    issued_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
+
+CREATE TABLE centers (
+    center_id SERIAL PRIMARY KEY,
+    center_name VARCHAR(100),
+    center_code VARCHAR(50) UNIQUE NOT NULL,
+    address TEXT,
+    contact_info VARCHAR(100),
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+CREATE TABLE states (
+    state_id SERIAL PRIMARY KEY,
+    state_name VARCHAR(100) UNIQUE
+);
+
+CREATE TABLE cities (
+    city_id SERIAL PRIMARY KEY,
+    city_name VARCHAR(100),
+    state_id INT REFERENCES states(state_id) ON DELETE CASCADE
+);
+CREATE TABLE exam_sessions (
+    session_id SERIAL PRIMARY KEY,
+    exam_name VARCHAR(100),
+    start_date DATE,
+    end_date DATE,
+    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+CREATE TABLE password_changes (
+    change_id SERIAL PRIMARY KEY,
+    user_id INT, -- References to admin or users
+    old_password VARCHAR(255),
+    new_password VARCHAR(255),
+    changed_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+
+
+
+
