@@ -194,6 +194,13 @@ CREATE TABLE sb.classes (
 
 
 
+ALTER TABLE sb.students
+ADD COLUMN class_row_id text REFERENCES sb.classes(class_row_id),
+ADD COLUMN board_row_id text REFERENCES sb.boards(board_row_id);
+
+
+
+
 
 
 
