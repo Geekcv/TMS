@@ -170,6 +170,28 @@ CREATE TABLE sb.exam_sessions (
 
 
 
+CREATE TABLE sb.boards (
+    id serial NOT NULL,
+    board_row_id text PRIMARY KEY,
+    board_name TEXT NOT NULL UNIQUE,  -- e.g., 'CBSE', 'ICSE', 'State Board'
+    description TEXT,
+    cr_on timestamp without time zone DEFAULT now() NOT NULL,
+    up_on timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+CREATE TABLE sb.classes (
+    id serial NOT NULL,
+    class_row_id text PRIMARY KEY,
+    class_name Text NOT NULL,  -- e.g., "10th", "12th"
+    board_row_id text REFERENCES sb.boards(board_row_id) ON DELETE SET NULL,
+    description Text,
+    cr_on timestamp without time zone DEFAULT now() NOT NULL,
+    up_on timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+
 
 
 
