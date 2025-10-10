@@ -1,90 +1,182 @@
-async function fetchApprovedTemplates(req, res) {
-  try {
-    const org = req.organization_id;
-    console.log("Fetching approved templates →", org);
+To create a WhatsApp template with media (like Image / Video / Document) using the WhatsApp Cloud API, the process has two main steps:
 
-    // ✅ Fetch only approved templates from your DB
-    const query = `
-      SELECT 
-        row_id,
-        name,
-        language,
-        category,
-        status,
-        components,
-        cr_on,
-        up_on
-      FROM wap.templates
-      WHERE organization_id = '${org}'
-      AND UPPER(status) = 'APPROVED'
-      ORDER BY up_on DESC
-    `;
 
-    const templates = await queries.customQuery(query);
+---
 
-    if (!templates || templates.length === 0) {
-      return libFunc.sendResponse(res, {
-        status: 1,
-        msg: "No approved templates found",
-        data: [],
-      });
-    }
+🧩 STEP 1: Upload your media file to get media_id
 
-    // ✅ Format the data before sending (optional)
-    const formatted = templates.map(tpl => ({
-      id: tpl.row_id,
-      name: tpl.name,
-      category: tpl.category,
-      language: tpl.language,
-      status: tpl.status,
-      header: tpl.components?.find?.(c => c.type === 'HEADER')?.text || '',
-      body: tpl.components?.find?.(c => c.type === 'BODY')?.text || '',
-      footer: tpl.components?.find?.(c => c.type === 'FOOTER')?.text || '',
-      buttons: tpl.components?.find?.(c => c.type === 'BUTTONS')?.buttons || [],
-      created: tpl.cr_on,
-      updated: tpl.up_on,
-    }));
+Before you can create a template with media, you must upload the file to WhatsApp and get a media_id.
 
-    return libFunc.sendResponse(res, {
-      status: 0,
-      msg: "Approved templates fetched successfully",
-      count: formatted.length,
-      data: formatted,
-    });
+📤 API:
 
-  } catch (err) {
-    console.error("Error in fetchApprovedTemplates:", err);
-    return libFunc.sendResponse(res, {
-      status: 1,
-      msg: "Server error while fetching approved templates",
-      error: err.message,
-    });
-  }
+POST https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/media
+
+🧾 Headers:
+
+Authorization: Bearer YOUR_ACCESS_TOKEN
+Content-Type: multipart/form-data
+
+📎 Body:
+
+file: your media file (e.g., image.jpg, video.mp4, pdf)
+
+type: MIME type (e.g., image/jpeg, video/mp4, application/pdf)
+
+messaging_product: whatsapp
+
+
+✅ Example (cURL):
+
+curl -X POST "https://graph.facebook.com/v21.0/1234567890/media" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -F "file=@/path/to/image.jpg" \
+  -F "type=image/jpeg" \
+  -F "messaging_product=whatsapp"
+
+📥 Response Example:
+
+{
+  "id": "1234567890123456"
 }
 
-<div class="dialog-container">
-  <h2 class="title">Select Template</h2>
+👉 Save this id — this is your media_id.
 
-  <div class="content-container">
-    <!-- Left: Template list -->
-    <div class="template-list">
-      <mat-selection-list [(ngModel)]="selectedTemplate" (selectionChange)="onTemplateSelect($event)">
-        <mat-list-option *ngFor="let tpl of templates" [value]="tpl">
-          {{ tpl.name }}
-          <span class="status" [ngClass]="tpl.status.toLowerCase()">{{ tpl.status }}</span>
-        </mat-list-option>
-      </mat-selection-list>
-    </div>
 
-    <!-- Right: Template details -->
-    <div class="template-details" *ngIf="activeTemplate">
-      <h3>{{ activeTemplate.name }}</h3>
-      <p><strong>Category:</strong> {{ activeTemplate.category }}</p>
-      <p><strong>Language:</strong> {{ activeTemplate.language }}</p>
-      <mat-divider></mat-divider>
+---
 
-      <div class="section" *ngIf="activeTemplate.header">
-        <h4>Header</h4>
+🧰 STEP 2: Create Template with Media
+
+Once you have media_id, you can create a template with header media (Image / Video / Document).
+
+📤 API:
+
+POST https://graph.facebook.com/v21.0/{WABA_ID}/message_templates
+
+🧾 Headers:
+
+Authorization: Bearer YOUR_ACCESS_TOKEN
+Content-Type: application/json
+
+📝 Body Example (Image Template):
+
+{
+  "name": "media_promo_template",
+  "language": "en_US",
+  "category": "MARKETING",
+  "components": [
+    {
+      "type": "HEADER",
+      "format": "IMAGE",
+      "example": {
+        "header_handle": ["1234567890123456"]
+      }
+    },
+    {
+      "type": "BODY",
+      "text": "Hello {{1}}, check out our new product launch!"
+    },
+    {
+      "type": "FOOTER",
+      "text": "Powered by MyCompany"
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [
+        {
+          "type": "URL",
+          "text": "View More",
+          "url": "https://mywebsite.com"
+        }
+      ]
+    }
+  ]
+}
+
+> 🔸 header_handle must be the media_id you got in Step 1.
+
+
+
+📥 Response Example:
+
+{
+  "id": "9876543210987654",
+  "status": "PENDING",
+  "category": "MARKETING"
+}
+
+🕒 After submission, the template goes for approval. Once approved, you can use it in messages.
+
+
+---
+
+🧲 Supported Media Formats for Templates
+
+Media Type	Format	Max Size
+
+Image	JPEG, PNG	5 MB
+Video	MP4	16 MB
+Document	PDF, DOC, DOCX, etc.	100 MB
+
+
+
+---
+
+📡 Optional: Fetch Media Back (Preview / Download)
+
+You can also get media details or download it:
+
+📤 API:
+
+GET https://graph.facebook.com/v21.0/{MEDIA_ID}
+Authorization: Bearer YOUR_ACCESS_TOKEN
+
+📥 Response Example:
+
+{
+  "url": "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=MEDIA_ID",
+  "mime_type": "image/jpeg",
+  "sha256": "..."
+}
+
+To download:
+
+GET https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=MEDIA_ID
+
+
+---
+
+✅ Summary of Full Flow:
+
+1. 📤 Upload file → get media_id
+
+
+2. 🧰 Create template with header media → get template ID
+
+
+3. 🕒 Wait for template approval
+
+
+4. 💬 Send message using that template
+
+
+5. 📥 Fetch media if needed.
+
+
+
+
+---
+
+If you want, I can give you the Node.js Express API code to:
+
+📌 Upload Media
+
+🧾 Create Media Template
+
+📥 Fetch Media
+
+
+👉 Would you like me to give you that Node.js code? (Yes/No)
+
         <p>{{ activeTemplate.header }}</p>
       </div>
 
