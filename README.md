@@ -1,334 +1,234 @@
-To create a WhatsApp template with media (like Image / Video / Document) using the WhatsApp Cloud API, the process has two main steps:
-
-
----
-
-🧩 STEP 1: Upload your media file to get media_id
-
-Before you can create a template with media, you must upload the file to WhatsApp and get a media_id.
-
-📤 API:
-
-POST https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/media
-
-🧾 Headers:
-
-Authorization: Bearer YOUR_ACCESS_TOKEN
-Content-Type: multipart/form-data
-
-📎 Body:
-
-file: your media file (e.g., image.jpg, video.mp4, pdf)
-
-type: MIME type (e.g., image/jpeg, video/mp4, application/pdf)
-
-messaging_product: whatsapp
-
-
-✅ Example (cURL):
-
-curl -X POST "https://graph.facebook.com/v21.0/1234567890/media" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -F "file=@/path/to/image.jpg" \
-  -F "type=image/jpeg" \
-  -F "messaging_product=whatsapp"
-
-📥 Response Example:
-
-{
-  "id": "1234567890123456"
-}
-
-👉 Save this id — this is your media_id.
-
-
----
-
-🧰 STEP 2: Create Template with Media
-
-Once you have media_id, you can create a template with header media (Image / Video / Document).
-
-📤 API:
-
-POST https://graph.facebook.com/v21.0/{WABA_ID}/message_templates
-
-🧾 Headers:
-
-Authorization: Bearer YOUR_ACCESS_TOKEN
-Content-Type: application/json
-
-📝 Body Example (Image Template):
-
-{
-  "name": "media_promo_template",
-  "language": "en_US",
-  "category": "MARKETING",
-  "components": [
-    {
-      "type": "HEADER",
-      "format": "IMAGE",
-      "example": {
-        "header_handle": ["1234567890123456"]
-      }
-    },
-    {
-      "type": "BODY",
-      "text": "Hello {{1}}, check out our new product launch!"
-    },
-    {
-      "type": "FOOTER",
-      "text": "Powered by MyCompany"
-    },
-    {
-      "type": "BUTTONS",
-      "buttons": [
-        {
-          "type": "URL",
-          "text": "View More",
-          "url": "https://mywebsite.com"
-        }
-      ]
-    }
-  ]
-}
-
-> 🔸 header_handle must be the media_id you got in Step 1.
-
-
-
-📥 Response Example:
-
-{
-  "id": "9876543210987654",
-  "status": "PENDING",
-  "category": "MARKETING"
-}
-
-🕒 After submission, the template goes for approval. Once approved, you can use it in messages.
-
-
----
-
-🧲 Supported Media Formats for Templates
-
-Media Type	Format	Max Size
-
-Image	JPEG, PNG	5 MB
-Video	MP4	16 MB
-Document	PDF, DOC, DOCX, etc.	100 MB
-
-
-
----
-
-📡 Optional: Fetch Media Back (Preview / Download)
-
-You can also get media details or download it:
-
-📤 API:
-
-GET https://graph.facebook.com/v21.0/{MEDIA_ID}
-Authorization: Bearer YOUR_ACCESS_TOKEN
-
-📥 Response Example:
-
-{
-  "url": "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=MEDIA_ID",
-  "mime_type": "image/jpeg",
-  "sha256": "..."
-}
-
-To download:
-
-GET https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=MEDIA_ID
-
-
----
-
-✅ Summary of Full Flow:
-
-1. 📤 Upload file → get media_id
-
-
-2. 🧰 Create template with header media → get template ID
-
-
-3. 🕒 Wait for template approval
-
-
-4. 💬 Send message using that template
-
-
-5. 📥 Fetch media if needed.
-
-
-
-
----
-
-If you want, I can give you the Node.js Express API code to:
-
-📌 Upload Media
-
-🧾 Create Media Template
-
-📥 Fetch Media
-
-
-👉 Would you like me to give you that Node.js code? (Yes/No)
-
-        <p>{{ activeTemplate.header }}</p>
-      </div>
-
-      <div class="section" *ngIf="activeTemplate.body">
-        <h4>Body</h4>
-        <p>{{ activeTemplate.body }}</p>
-      </div>
-
-      <div class="section" *ngIf="activeTemplate.footer">
-        <h4>Footer</h4>
-        <p>{{ activeTemplate.footer }}</p>
-      </div>
-
-      <div class="section" *ngIf="activeTemplate.buttons?.length">
-        <h4>Buttons</h4>
-        <ul>
-          <li *ngFor="let btn of activeTemplate.buttons">{{ btn.text }}</li>
-        </ul>
-      </div>
-
-      <!-- ✅ Use Template Button -->
-      <div class="use-template-btn">
-        <button mat-flat-button color="primary" (click)="useTemplate()">
-          Use Template
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <div class="actions">
-    <button mat-stroked-button color="warn" (click)="closeDialog()">Close</button>
-  </div>
-</div>
-
-import { Component, Inject } from '@angular/core';
-import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
-
-@Component({
-  selector: 'app-template-view-dialog',
-  templateUrl: './template-view-dialog.component.html',
-  styleUrls: ['./template-view-dialog.component.scss']
-})
-export class TemplateViewDialogComponent {
-  templates: any[] = [];
-  activeTemplate: any = null;
-  selectedTemplate: any = null;
-
-  constructor(
-    @Inject(MAT_DIALOG_DATA) public data: any,
-    private dialogRef: MatDialogRef<TemplateViewDialogComponent>
-  ) {
-    this.templates = data.templates || [];
-  }
-
-  onTemplateSelect(event: any) {
-    this.activeTemplate = event.options[0].value;
-  }
-
-  useTemplate() {
-    if (this.activeTemplate) {
-      // ✅ Return selected template name to parent component
-      this.dialogRef.close(this.activeTemplate.name);
-    }
-  }
-
-  closeDialog() {
-    this.dialogRef.close();
-  }
-}
-
-
-import { Component } from '@angular/core';
-import { MatDialog } from '@angular/material/dialog';
-import { TemplateViewDialogComponent } from '../template-view-dialog/template-view-dialog.component';
-import { ApiService } from '../services/api.service';
-
-@Component({
-  selector: 'app-message-compose',
-  templateUrl: './message-compose.component.html',
-  styleUrls: ['./message-compose.component.scss']
-})
-export class MessageComposeComponent {
-  messageText = '';
-  templates: any[] = [];
-
-  constructor(private dialog: MatDialog, private api: ApiService) {}
-
-  openTemplateDialog() {
-    this.api.fetchApprovedTemplates().subscribe((resp: any) => {
-      if (resp.status === 0) {
-        const dialogRef = this.dialog.open(TemplateViewDialogComponent, {
-          width: '850px',
-          data: { templates: resp.data },
-        });
-
-        // ✅ Get selected template name
-        dialogRef.afterClosed().subscribe((selectedTemplateName) => {
-          if (selectedTemplateName) {
-            this.messageText = selectedTemplateName;
-          }
-        });
-      }
-    });
-  }
-
-  sendMessage() {
-    if (!this.messageText.trim()) return;
-    console.log('Message sent:', this.messageText);
-    this.messageText = '';
-  }
-}
-
-
-
-<div class="chatbox-container">
-  <div class="chat-input">
-    <mat-form-field appearance="outline" class="message-input">
-      <input matInput placeholder="Type your message..." [(ngModel)]="messageText">
-    </mat-form-field>
-
-    <button mat-icon-button color="primary" (click)="openTemplateDialog()">
-      <mat-icon>description</mat-icon>
-    </button>
-
-    <button mat-raised-button color="accent" (click)="sendMessage()">
-      Send
-    </button>
-  </div>
-</div>
-
-
-
-.chatbox-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 1rem;
-
-  .chat-input {
-    display: flex;
-    align-items: center;
-    width: 600px;
-    gap: 10px;
-
-    .message-input {
-      flex: 1;
-    }
-
-    button[mat-icon-button] {
-      background: #f5f5f5;
+ background: #f5f5f5;
       border-radius: 50%;
     }
   }
 }
 
+// =========================================================
+  // ================= Template Editing ======================
+  // =========================================================
+  /**
+   * Edit an existing template
+   * @param {string} wabaId
+   * @param {string} templateId - Template ID to update
+   * @param {Object} updates - { name?, category?, components?, language?, status? }
+   * NOTE: Only specific fields may be editable per WhatsApp's rules.
+   */
+  async editTemplate(wabaId = this.wabaId, templateId, updates = {}) {
+    if (!wabaId || !templateId) throw new Error('wabaId & templateId required');
+    if (!updates || typeof updates !== 'object') throw new Error('updates object required');
+    return this._request(`${wabaId}/message_templates/${templateId}`, { method: 'POST', body: updates });
+  }
+
+  // =========================================================
+  // ===================== Media Upload ======================
+  // =========================================================
+  /**
+   * Upload a media file (image, video, document, etc.)
+   * @param {string} phoneNumberId
+   * @param {Buffer|Blob|File|string} fileData - File buffer (Node) or Blob/File (Browser)
+   * @param {string} mimeType - MIME type (e.g., 'image/jpeg', 'video/mp4')
+   * @param {string} [filename] - Optional filename
+   */
+  async uploadMedia(phoneNumberId = this.phoneNumberId, fileData, mimeType, filename = 'file') {
+    if (!phoneNumberId) throw new Error('phoneNumberId required');
+    if (!fileData || !mimeType) throw new Error('fileData & mimeType required');
+
+    const token = await this._getToken();
+    const formData = new FormData();
+    formData.append('file', fileData, filename);
+    formData.append('messaging_product', 'whatsapp');
+
+    const res = await fetch(`${this.apiBaseURL}/${phoneNumberId}/media`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      body: formData
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(`Media upload failed: ${data.error?.message || res.statusText}`);
+    }
+    return data; // contains media ID (used in message payloads)
+  }
+
+  // =========================================================
+  // ===================== Media Fetch =======================
+  // =========================================================
+  /**
+   * Fetch a media file using media ID
+   * @param {string} mediaId
+   * @returns {Promise<{ buffer: Buffer, mimeType: string }>} - Media content and type
+   */
+  async fetchMedia(mediaId) {
+    if (!mediaId) throw new Error('mediaId required');
+
+    const token = await this._getToken();
+    const metadataRes = await fetch(`${this.apiBaseURL}/${mediaId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const metadata = await metadataRes.json();
+    if (!metadata.url) throw new Error('Invalid media metadata response.');
+
+    const mediaRes = await fetch(metadata.url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const buffer = await mediaRes.arrayBuffer();
+    return {
+      buffer: Buffer.from(buffer),
+      mimeType: metadata.mime_type
+    };
+  }
+
+
+
+const sdk = new WhatsAppSDK({
+  accessToken: process.env.WHATSAPP_TOKEN,
+  wabaId: process.env.WABA_ID,
+  phoneNumberId: process.env.PHONE_NUMBER_ID
+});
+
+// ✅ Upload an image
+const fs = require('fs');
+const imageBuffer = fs.readFileSync('./banner.jpg');
+const uploadResp = await sdk.uploadMedia(null, imageBuffer, 'image/jpeg', 'banner.jpg');
+console.log('Uploaded media ID:', uploadResp.id);
+
+// ✅ Edit an existing template
+await sdk.editTemplate(process.env.WABA_ID, '1234567890', {
+  components: [
+    { type: 'BODY', text: 'Updated message body here!' }
+  ]
+});
+
+// ✅ Fetch media by ID
+const media = await sdk.fetchMedia(uploadResp.id);
+fs.writeFileSync('./downloaded.jpg', media.buffer);
+console.log('Media downloaded with type:', media.mimeType);
+
+
+
+
+// =========================================================
+  // ================== Campaign Management ==================
+  // =========================================================
+  /**
+   * List all campaigns under a WABA
+   * @param {string} wabaId
+   * @param {Object} [options] - { limit, after, before, status }
+   */
+  async listCampaigns(wabaId = this.wabaId, options = {}) {
+    if (!wabaId) throw new Error('wabaId required');
+    const query = {};
+    if (options.limit) query.limit = String(options.limit);
+    if (options.after) query.after = options.after;
+    if (options.before) query.before = options.before;
+    if (options.status) query.status = options.status; // e.g., ACTIVE, PAUSED, COMPLETED
+    return this._request(`${wabaId}/whatsapp_campaigns`, { query });
+  }
+
+  /**
+   * Get campaign details by ID
+   * @param {string} campaignId
+   */
+  async getCampaign(campaignId) {
+    if (!campaignId) throw new Error('campaignId required');
+    return this._request(`${campaignId}`);
+  }
+
+  /**
+   * Create a new WhatsApp campaign
+   * @param {Object} cfg
+   * @param {string} cfg.wabaId - WhatsApp Business Account ID
+   * @param {string} cfg.name - Campaign name
+   * @param {string} cfg.templateName - Template name to use
+   * @param {string} cfg.language - Template language (e.g., en_US)
+   * @param {string[]} cfg.to - Array of recipient phone numbers
+   * @param {Object[]} [cfg.components] - Template components if dynamic
+   * @param {string} [cfg.scheduleTime] - Optional future ISO date for scheduling
+   */
+  async createCampaign({ wabaId = this.wabaId, name, templateName, language, to, components = null, scheduleTime = null }) {
+    if (!wabaId || !name || !templateName || !language || !Array.isArray(to) || !to.length) {
+      throw new Error('wabaId, name, templateName, language, and recipient list required');
+    }
+
+    const payload = {
+      name,
+      messaging_product: 'whatsapp',
+      template: {
+        name: templateName,
+        language: { code: language }
+      },
+      to,
+    };
+
+    if (components) payload.template.components = components;
+    if (scheduleTime) payload.schedule_time = scheduleTime; // ISO date string
+
+    return this._request(`${wabaId}/whatsapp_campaigns`, { method: 'POST', body: payload });
+  }
+
+  /**
+   * Pause a campaign
+   * @param {string} campaignId
+   */
+  async pauseCampaign(campaignId) {
+    if (!campaignId) throw new Error('campaignId required');
+    return this._request(`${campaignId}`, { method: 'POST', body: { status: 'PAUSED' } });
+  }
+
+  /**
+   * Resume a paused campaign
+   * @param {string} campaignId
+   */
+  async resumeCampaign(campaignId) {
+    if (!campaignId) throw new Error('campaignId required');
+    return this._request(`${campaignId}`, { method: 'POST', body: { status: 'ACTIVE' } });
+  }
+
+  /**
+   * Delete a campaign
+   * @param {string} campaignId
+   */
+  async deleteCampaign(campaignId) {
+    if (!campaignId) throw new Error('campaignId required');
+    return this._request(`${campaignId}`, { method: 'DELETE' });
+  }
+
+
+
+const sdk = new WhatsAppSDK({
+  accessToken: process.env.WHATSAPP_TOKEN,
+  wabaId: process.env.WABA_ID
+});
+
+// ✅ Create a campaign
+const newCamp = await sdk.createCampaign({
+  name: 'Festive Offer Campaign',
+  templateName: 'festive_offer',
+  language: 'en_US',
+  to: ['919876543210', '919123456789'],
+  components: [
+    { type: 'body', parameters: [{ type: 'text', text: '50% OFF on all products!' }] }
+  ],
+  scheduleTime: '2025-10-10T12:00:00Z'
+});
+console.log('Created campaign:', newCamp);
+
+// ✅ List campaigns
+const campaigns = await sdk.listCampaigns();
+console.log('Campaigns:', campaigns);
+
+// ✅ Pause campaign
+await sdk.pauseCampaign(newCamp.id);
+
+// ✅ Resume campaign
+await sdk.resumeCampaign(newCamp.id);
+
+// ✅ Delete campaign
+await sdk.deleteCampaign(newCamp.id);
+
+  
+  
