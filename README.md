@@ -1,234 +1,208 @@
- background: #f5f5f5;
-      border-radius: 50%;
+app.post("/webhook", async (req, res) => {
+  try {
+    const changes = req.body.entry?.[0]?.changes?.[0];
+
+    const messages = changes?.value?.messages;
+    const statuses = changes?.value?.statuses; // delivery/read updates
+
+    // Insert incoming messages
+    if (messages) {
+      for (const msg of messages) {
+        const waMessageId = msg.id;
+        const phone = msg.from;
+        const body = msg.text?.body || "";
+        const others_data = JSON.stringify(msg);
+
+        const row_id = libFunc.randomid();
+
+        await queries.customQuery(`
+          INSERT INTO wap.messages 
+            (row_id, phone, direction, body, message_id, others_data)
+          VALUES ('${row_id}', '${phone}', 'in', '${body}', '${waMessageId}', '${others_data}')
+        `);
+      }
     }
+
+    // Update outgoing message with message_id and status
+    if (statuses) {
+      for (const status of statuses) {
+        const waMessageId = status.id;
+        const messageStatus = status.status; // sent, delivered, read, failed
+
+        await queries.customQuery(`
+          UPDATE wap.messages
+          SET status='${messageStatus}', message_id='${waMessageId}', up_on=now()
+          WHERE phone='${status.recipient_id}'
+        `);
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("Webhook error:", err);
+    res.sendStatus(500);
+  }
+});
+
+
+
+async function sendMessageContact(req, res) {
+  try {
+    const { phone_no, msg } = req.data || {};
+    const org = req.organization_id;
+
+    if (!phone_no || !msg || !org) {
+      return libFunc.sendResponse(res, {
+        status: 1,
+        msg: "Missing required fields",
+      });
+    }
+
+    // Fetch API credentials
+    const checkQuery = `
+      SELECT waba_id, business_id, phone_number_id, access_token
+      FROM wap.api_credentials
+      WHERE organization_id = '${org}'
+      LIMIT 1
+    `;
+    const checkResult = await queries.customQuery(checkQuery);
+
+    if (!checkResult || checkResult.length === 0) {
+      return libFunc.sendResponse(res, {
+        status: 1,
+        msg: "No API credentials found for this organization",
+      });
+    }
+
+    const { waba_id, business_id, phone_number_id, access_token } = checkResult[0];
+
+    // Initialize WhatsApp SDK
+    const wadata = new WhatsAppSDK({
+      accessToken: access_token,
+      phoneNumberId: phone_number_id,
+      wabaId: waba_id,
+      verifyToken: process.env.WEBHOOK_VERIFY_TOKEN,
+      appSecret: process.env.APP_SECRET,
+    });
+
+    // Save outgoing message in DB with status 'pending'
+    const row_id = libFunc.randomid();
+    await queries.customQuery(`
+      INSERT INTO ${messagesTable} 
+        (row_id, phone, direction, body, organization_id, status)
+      VALUES ('${row_id}', '${phone_no}', 'out', '${msg}', '${org}', 'pending')
+    `);
+    
+    // Send message via WhatsApp
+    try {
+      await wadata.sendText({ to: phone_no, body: msg });
+      console.log("Message request sent to WhatsApp API");
+    } catch (err) {
+      console.error("WhatsApp send error:", err.message);
+      // Status remains 'pending' until webhook confirms
+    }
+    
+
+    return libFunc.sendResponse(res, {
+      status: 0,
+      msg: "Message request processed successfully",
+      row_id,
+      waMessageId
+    });
+
+  } catch (err) {
+    return libFunc.sendResponse(res, {
+      status: 1,
+      msg: "Server error",
+      error: err.message,
+    });
   }
 }
 
-// =========================================================
-  // ================= Template Editing ======================
-  // =========================================================
-  /**
-   * Edit an existing template
-   * @param {string} wabaId
-   * @param {string} templateId - Template ID to update
-   * @param {Object} updates - { name?, category?, components?, language?, status? }
-   * NOTE: Only specific fields may be editable per WhatsApp's rules.
-   */
-  async editTemplate(wabaId = this.wabaId, templateId, updates = {}) {
-    if (!wabaId || !templateId) throw new Error('wabaId & templateId required');
-    if (!updates || typeof updates !== 'object') throw new Error('updates object required');
-    return this._request(`${wabaId}/message_templates/${templateId}`, { method: 'POST', body: updates });
-  }
-
-  // =========================================================
-  // ===================== Media Upload ======================
-  // =========================================================
-  /**
-   * Upload a media file (image, video, document, etc.)
-   * @param {string} phoneNumberId
-   * @param {Buffer|Blob|File|string} fileData - File buffer (Node) or Blob/File (Browser)
-   * @param {string} mimeType - MIME type (e.g., 'image/jpeg', 'video/mp4')
-   * @param {string} [filename] - Optional filename
-   */
-  async uploadMedia(phoneNumberId = this.phoneNumberId, fileData, mimeType, filename = 'file') {
-    if (!phoneNumberId) throw new Error('phoneNumberId required');
-    if (!fileData || !mimeType) throw new Error('fileData & mimeType required');
-
-    const token = await this._getToken();
-    const formData = new FormData();
-    formData.append('file', fileData, filename);
-    formData.append('messaging_product', 'whatsapp');
-
-    const res = await fetch(`${this.apiBaseURL}/${phoneNumberId}/media`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
-      body: formData
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(`Media upload failed: ${data.error?.message || res.statusText}`);
-    }
-    return data; // contains media ID (used in message payloads)
-  }
-
-  // =========================================================
-  // ===================== Media Fetch =======================
-  // =========================================================
-  /**
-   * Fetch a media file using media ID
-   * @param {string} mediaId
-   * @returns {Promise<{ buffer: Buffer, mimeType: string }>} - Media content and type
-   */
-  async fetchMedia(mediaId) {
-    if (!mediaId) throw new Error('mediaId required');
-
-    const token = await this._getToken();
-    const metadataRes = await fetch(`${this.apiBaseURL}/${mediaId}`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    const metadata = await metadataRes.json();
-    if (!metadata.url) throw new Error('Invalid media metadata response.');
-
-    const mediaRes = await fetch(metadata.url, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    const buffer = await mediaRes.arrayBuffer();
-    return {
-      buffer: Buffer.from(buffer),
-      mimeType: metadata.mime_type
-    };
-  }
 
 
-
-const sdk = new WhatsAppSDK({
-  accessToken: process.env.WHATSAPP_TOKEN,
-  wabaId: process.env.WABA_ID,
-  phoneNumberId: process.env.PHONE_NUMBER_ID
-});
-
-// ✅ Upload an image
-const fs = require('fs');
-const imageBuffer = fs.readFileSync('./banner.jpg');
-const uploadResp = await sdk.uploadMedia(null, imageBuffer, 'image/jpeg', 'banner.jpg');
-console.log('Uploaded media ID:', uploadResp.id);
-
-// ✅ Edit an existing template
-await sdk.editTemplate(process.env.WABA_ID, '1234567890', {
-  components: [
-    { type: 'BODY', text: 'Updated message body here!' }
-  ]
-});
-
-// ✅ Fetch media by ID
-const media = await sdk.fetchMedia(uploadResp.id);
-fs.writeFileSync('./downloaded.jpg', media.buffer);
-console.log('Media downloaded with type:', media.mimeType);
-
-
-
-
-// =========================================================
-  // ================== Campaign Management ==================
-  // =========================================================
-  /**
-   * List all campaigns under a WABA
-   * @param {string} wabaId
-   * @param {Object} [options] - { limit, after, before, status }
-   */
-  async listCampaigns(wabaId = this.wabaId, options = {}) {
-    if (!wabaId) throw new Error('wabaId required');
-    const query = {};
-    if (options.limit) query.limit = String(options.limit);
-    if (options.after) query.after = options.after;
-    if (options.before) query.before = options.before;
-    if (options.status) query.status = options.status; // e.g., ACTIVE, PAUSED, COMPLETED
-    return this._request(`${wabaId}/whatsapp_campaigns`, { query });
-  }
-
-  /**
-   * Get campaign details by ID
-   * @param {string} campaignId
-   */
-  async getCampaign(campaignId) {
-    if (!campaignId) throw new Error('campaignId required');
-    return this._request(`${campaignId}`);
-  }
-
-  /**
-   * Create a new WhatsApp campaign
-   * @param {Object} cfg
-   * @param {string} cfg.wabaId - WhatsApp Business Account ID
-   * @param {string} cfg.name - Campaign name
-   * @param {string} cfg.templateName - Template name to use
-   * @param {string} cfg.language - Template language (e.g., en_US)
-   * @param {string[]} cfg.to - Array of recipient phone numbers
-   * @param {Object[]} [cfg.components] - Template components if dynamic
-   * @param {string} [cfg.scheduleTime] - Optional future ISO date for scheduling
-   */
-  async createCampaign({ wabaId = this.wabaId, name, templateName, language, to, components = null, scheduleTime = null }) {
-    if (!wabaId || !name || !templateName || !language || !Array.isArray(to) || !to.length) {
-      throw new Error('wabaId, name, templateName, language, and recipient list required');
-    }
+async sendText({
+    to,
+    body,
+    previewUrl = false,
+    replyTo = null,
+    phoneNumberId = null,
+  }) {
+    const sender = phoneNumberId || this.phoneNumberId;
+    if (!sender)
+      throw new Error("phoneNumberId is required (config or param).");
 
     const payload = {
-      name,
-      messaging_product: 'whatsapp',
-      template: {
-        name: templateName,
-        language: { code: language }
-      },
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
       to,
+      type: "text",
+      text: { body, preview_url: !!previewUrl },
     };
+    if (replyTo) payload.context = { message_id: replyTo };
 
-    if (components) payload.template.components = components;
-    if (scheduleTime) payload.schedule_time = scheduleTime; // ISO date string
+    const data = await this._request(`${sender}/messages`, {
+      method: "POST",
+      body: payload,
+    });
 
-    return this._request(`${wabaId}/whatsapp_campaigns`, { method: 'POST', body: payload });
-  }
+    console.log("Full sendText response:-------------------", data);
 
-  /**
-   * Pause a campaign
-   * @param {string} campaignId
-   */
-  async pauseCampaign(campaignId) {
-    if (!campaignId) throw new Error('campaignId required');
-    return this._request(`${campaignId}`, { method: 'POST', body: { status: 'PAUSED' } });
-  }
+    // Extract WhatsApp message_id safely
+    const waMessageId = data?.messages?.[0]?.id || data?.message?.id || null;
 
-  /**
-   * Resume a paused campaign
-   * @param {string} campaignId
-   */
-  async resumeCampaign(campaignId) {
-    if (!campaignId) throw new Error('campaignId required');
-    return this._request(`${campaignId}`, { method: 'POST', body: { status: 'ACTIVE' } });
-  }
-
-  /**
-   * Delete a campaign
-   * @param {string} campaignId
-   */
-  async deleteCampaign(campaignId) {
-    if (!campaignId) throw new Error('campaignId required');
-    return this._request(`${campaignId}`, { method: 'DELETE' });
+    return { waMessageId, raw: data };
   }
 
 
+async _request(path, { method = "GET", body = null, query = {} } = {}) {
+    const token = await this._getToken();
+    const appsecret_proof = this._appsecretProof(token);
 
-const sdk = new WhatsAppSDK({
-  accessToken: process.env.WHATSAPP_TOKEN,
-  wabaId: process.env.WABA_ID
-});
+    const qs = new URLSearchParams(query);
+    if (appsecret_proof) qs.set("appsecret_proof", appsecret_proof);
 
-// ✅ Create a campaign
-const newCamp = await sdk.createCampaign({
-  name: 'Festive Offer Campaign',
-  templateName: 'festive_offer',
-  language: 'en_US',
-  to: ['919876543210', '919123456789'],
-  components: [
-    { type: 'body', parameters: [{ type: 'text', text: '50% OFF on all products!' }] }
-  ],
-  scheduleTime: '2025-10-10T12:00:00Z'
-});
-console.log('Created campaign:', newCamp);
+    const url = `${this.apiBaseURL}/${path}${qs.toString() ? `?${qs}` : ""}`;
 
-// ✅ List campaigns
-const campaigns = await sdk.listCampaigns();
-console.log('Campaigns:', campaigns);
+    const controller =
+      typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = controller
+      ? setTimeout(() => controller.abort(), this.timeoutMs)
+      : null;
 
-// ✅ Pause campaign
-await sdk.pauseCampaign(newCamp.id);
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : null,
+        signal: controller ? controller.signal : undefined,
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
-// ✅ Resume campaign
-await sdk.resumeCampaign(newCamp.id);
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
 
-// ✅ Delete campaign
-await sdk.deleteCampaign(newCamp.id);
+    if (!res.ok) {
+      const msg = data?.error?.message || `HTTP ${res.status}`;
+      const code = data?.error?.code;
+      const type = data?.error?.type;
+      const details = { status: res.status, code, type, message: msg };
+      const e = new Error(`Graph API error: ${msg}`);
+      e.details = details;
+      throw e;
+    }
 
-  
+    return data;
+  }
   
