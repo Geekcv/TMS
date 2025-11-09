@@ -6684,539 +6684,57 @@ async function fetchInactiveUserList(req, res) {
   });
 }
 
-// // Cron Job set according
-// /**
-//  *  Description :
-//  *  1-Fetch data weekly or monthly according to condtions (completion date)
-//  *  2- Genreate pdf according group departments and create orgnnization acording pdf
-//  *  3 - sent to client (email or whatsappas)
-//  */
-
-// async function fetchTaskSummary(period = "weekly") {
-//     const today = moment().tz("Asia/Kolkata");
-//     const startDate = period === "weekly"
-//         ? today.clone().subtract(7, "days").format("YYYY-MM-DD")
-//         : today.clone().startOf("month").format("YYYY-MM-DD");
-//     const endDate = today.format("YYYY-MM-DD");
-
-//     const query = `
-//     SELECT
-//         t.row_id AS task_id,
-//         t.title,
-//         t.description,
-//         t.completion_date,
-//         t.assigned_by,
-//         t.assigned_to,
-//         t.organizationid,
-//         o.organization_name,
-//         u1.name AS assigner_name,
-//         u2.name AS assignee_name,
-//         COALESCE(d.department_name, 'Owner') AS department_name,
-//         CASE
-//             WHEN t.active_status = 0 THEN 'ongoing'
-//             WHEN t.active_status = 1 THEN 'complete'
-//             WHEN t.active_status = 2 THEN 'overdue'
-//             ELSE 'Unknown'
-//         END AS status,
-//         CASE
-//             WHEN t.task_type = '0' THEN 'Normal'
-//             WHEN t.task_type = '1' THEN 'Recurring'
-//         END AS task_type_title,
-//         CASE
-//             WHEN t.active_status = 1 AND t.completion_date < CURRENT_DATE
-//                 THEN ABS(t.up_on::date - t.completion_date)
-//             WHEN t.completion_date >= CURRENT_DATE
-//                 THEN (t.completion_date - CURRENT_DATE)
-//             ELSE ABS(t.completion_date - CURRENT_DATE)
-//         END AS due_days
-//     FROM ${schema}.tasks t
-//     LEFT JOIN ${schema}.users u1 ON t.assigned_by = u1.row_id
-//     -- Handle JSONB assigned_to field
-//     LEFT JOIN ${schema}.users u2
-//         ON u2.row_id::text IN (SELECT jsonb_array_elements_text(t.assigned_to))
-//     LEFT JOIN ${schema}.departments d ON u1.deptid = d.row_id
-//     LEFT JOIN ${schema}.organizations o ON t.organizationid = o.row_id
-//     WHERE t.completion_date BETWEEN '${startDate}' AND '${endDate}'
-//     ORDER BY o.organization_name, d.department_name, t.completion_date;
-//     `;
-
-//     const result = await queries.custom_query(query);
-//     return result;
-// }
-
-// async function fetchDepartmentSummary(startDate, endDate,orgID) {
-//   const query = `
-//     WITH task_users AS (
-//       SELECT
-//         t.row_id,
-//         u.row_id AS user_id,
-//         u.name AS user_name,
-//         d.department_name,
-//         t.active_status
-//       FROM prosys.tasks t
-//       LEFT JOIN LATERAL jsonb_array_elements_text(t.assigned_to) AS assignee(user_id) ON TRUE
-//       LEFT JOIN prosys.users u ON u.row_id::text = assignee.user_id
-//       LEFT JOIN prosys.departments d ON u.deptid = d.row_id
-//       WHERE t.organizationid='${orgID}' and t.completion_date BETWEEN '${startDate}' AND '${endDate}'
-//     )
-//     SELECT
-//       COALESCE(department_name, 'Owner') AS department_name,
-//       COUNT(*) FILTER (WHERE active_status = 0) AS ongoing_count,
-//       COUNT(*) FILTER (WHERE active_status = 1) AS complete_count,
-//       COUNT(*) FILTER (WHERE active_status = 2) AS overdue_count
-//     FROM task_users
-//     GROUP BY department_name
-//     ORDER BY department_name;
-//   `;
-//   return await queries.custom_query(query);
-// }
-
-// async function generateTaskReportPDF(tasks, period, schema) {
-//   const reports = [];
-
-//   const today = moment().tz("Asia/Kolkata");
-//   const startDate = period === "weekly"
-//       ? today.clone().subtract(7, "days").format("YYYY-MM-DD")
-//       : today.clone().startOf("month").format("YYYY-MM-DD");
-//   const endDate = today.format("YYYY-MM-DD");
-
-//   console.log("startdate",startDate,"enddate",endDate)
-
-//   function addHeader(doc, orgName, deptName, headerImgPath) {
-//     try {
-//       if (fs.existsSync(headerImgPath)) {
-//         doc.image(headerImgPath, doc.page.margins.left, 10, { width: 100 });
-//       }
-//     } catch (e) { console.log("Header image not found:", e.message); }
-
-//     doc
-//       .fontSize(14)
-//       .font("Helvetica-Bold")
-//       .fillColor("#000000")
-//       .text(`${orgName} - ${deptName} Department`, 150, 25, { align: "left" });
-//   }
-
-//   function addFooter(doc, footerImgPath) {
-//     const bottom = doc.page.height - 40;
-//     try {
-//       if (fs.existsSync(footerImgPath)) {
-//         doc.image(footerImgPath, doc.page.margins.left, bottom - 20, { width: 80 });
-//       }
-//     } catch (e) { console.log("Footer image not found:", e.message); }
-//   }
-
-//   const orgGroups = tasks.reduce((acc, task) => {
-//     const orgId = task.organizationid || "unknown_org";
-//     if (!acc[orgId]) acc[orgId] = [];
-//     acc[orgId].push(task);
-//     return acc;
-//   }, {});
-
-//   for (const [organizationid, orgTasks] of Object.entries(orgGroups)) {
-//     const orgName = orgTasks[0]?.organization_name || "Unknown Organization";
-
-//     const orgFolder = path.join("./public/uploads", organizationid);
-//     if (!fs.existsSync(orgFolder)) fs.mkdirSync(orgFolder, { recursive: true });
-
-//     const deptGroups = orgTasks.reduce((acc, t) => {
-//       const dept = t.department_name || "Owner";
-//       if (!acc[dept]) acc[dept] = [];
-//       acc[dept].push(t);
-//       return acc;
-//     }, {});
-
-//     for (const [deptName, deptTasks] of Object.entries(deptGroups)) {
-//       const deptFolder = path.join(orgFolder, deptName.replace(/\s+/g, "_"));
-//       if (!fs.existsSync(deptFolder)) fs.mkdirSync(deptFolder, { recursive: true });
-
-//       const fileName = `Tasks_${deptName.replace(/\s+/g, "_")}_${Date.now()}.pdf`;
-//       const filePath = path.join(deptFolder, fileName);
-
-//       const doc = new PDFDocument({ margin: 40, size: "A4", layout: "landscape" });
-//       const writeStream = fs.createWriteStream(filePath);
-//       doc.pipe(writeStream);
-
-//       const rootPath = __dirname.slice(0, 32);
-//       const headerImgPath = path.join(rootPath, "uploads/image", "prosyslogo.png");
-//       const footerImgPath = path.join(rootPath, "uploads/image", "prosyslogo.png");
-
-//       addHeader(doc, orgName, deptName, headerImgPath);
-//       addFooter(doc, footerImgPath);
-
-//       let y = 70;
-
-//       doc
-//         .fontSize(9)
-//         .font("Helvetica")
-//         .text(`Period: ${startDate} to ${endDate}`, { align: "right" })
-//         .moveDown(1);
-//       y += 30;
-
-//       // ===== OWN TASK SUMMARY WITH COLOR LABELS =====
-//       const ownSummary = {
-//         ongoing: deptTasks.filter(t => t.status.toLowerCase() === "ongoing").length,
-//         complete: deptTasks.filter(t => t.status.toLowerCase() === "complete").length,
-//         overdue: deptTasks.filter(t => t.status.toLowerCase() === "overdue").length,
-//       };
-
-//       doc
-//         .fontSize(13)
-//         .font("Helvetica-Bold")
-//         .fillColor("#000000")
-//         .text("Task Summary Overview", 40, y);
-//       y += 25;
-
-//       const labelWidth = 100, labelHeight = 25, spacing = 20;
-//       let x = 40;
-
-//       // Blue — Ongoing
-//       doc.rect(x, y, labelWidth, labelHeight).fill("#1565c0").stroke();
-//       doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(11)
-//          .text(`Ongoing: ${ownSummary.ongoing}`, x + 8, y + 7);
-//       x += labelWidth + spacing;
-
-//       // Red — Overdue
-//       doc.rect(x, y, labelWidth, labelHeight).fill("#c62828").stroke();
-//       doc.fillColor("#ffffff").text(`Overdue: ${ownSummary.overdue}`, x + 8, y + 7);
-//       x += labelWidth + spacing;
-
-//       // Green — Completed
-//       doc.rect(x, y, labelWidth, labelHeight).fill("#2e7d32").stroke();
-//       doc.fillColor("#ffffff").text(`Completed: ${ownSummary.complete}`, x + 8, y + 7);
-
-//       y += labelHeight + 30;
-
-// // ===== USER-WISE SUMMARY TABLE =====
-// const userGroups = deptTasks.reduce((acc, task) => {
-//   const user = task.assignee_name || "Unassigned";
-//   if (!acc[user]) acc[user] = [];
-//   acc[user].push(task);
-//   return acc;
-// }, {});
-
-// // Build summary
-// let userSummary = Object.entries(userGroups).map(([userName, tasks]) => ({
-//   userName,
-//   department: tasks[0]?.department_name || "Owner",
-//   ongoing: tasks.filter(t => t.status.toLowerCase() === "ongoing").length,
-//   overdue: tasks.filter(t => t.status.toLowerCase() === "overdue").length,
-//   complete: tasks.filter(t => t.status.toLowerCase() === "complete").length,
-// }));
-
-// // Sort by overdue count (desc)
-// userSummary.sort((a, b) => b.overdue - a.overdue);
-
-// // Identify top 3 users
-// const top3UserNames = userSummary.slice(0, 3).map(u => u.userName);
-
-// if (userSummary.length > 0) {
-//   doc
-//     .fontSize(13)
-//     .font("Helvetica-Bold")
-//     .fillColor("#000000")
-//     .text("User-wise Task Summary", 40, y);
-//   y += 25;
-
-//   const headers = ["#", "User Name", "Department", "Ongoing", "Overdue", "Completed"];
-//   const colWidths = [30, 150, 150, 80, 80, 80];
-//   const rowHeight = 25;
-
-//   let x = 40;
-//   const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-
-//   // Table Header
-//   doc.rect(x, y, totalWidth, rowHeight).fill("#1a237e").stroke();
-//   doc.fillColor("#ffffff").fontSize(11).font("Helvetica-Bold");
-//   headers.forEach((header, i) => {
-//     doc.text(header, x + 5, y + 7, { width: colWidths[i] - 10 });
-//     x += colWidths[i];
-//   });
-//   y += rowHeight;
-
-//   // Rows
-//   userSummary.forEach((user, idx) => {
-//     if (y > 500) {
-//       doc.addPage();
-//       addHeader(doc, orgName, deptName, headerImgPath);
-//       addFooter(doc, footerImgPath);
-//       y = 100;
-//     }
-
-//     let x = 40;
-
-//     // Highlight top 3 users with gradient color
-//     let rowColor = idx % 2 === 0 ? "#f5f5f5" : "#ffffff";
-//     if (top3UserNames.includes(user.userName)) {
-//       // Light gold for top 1, silver for top 2, bronze for top 3
-//       if (idx === 0) rowColor = "#fff8e1"; // gold
-//       else if (idx === 1) rowColor = "#e0f7fa"; // silver-blue
-//       else if (idx === 2) rowColor = "#f3e5f5"; // bronze-purple
-//     }
-
-//     doc.rect(x, y, totalWidth, rowHeight).fill(rowColor).stroke();
-//     doc.font("Helvetica").fontSize(10);
-
-//     // Normal text
-//     doc.fillColor("#000000");
-//     doc.text(idx + 1, x + 5, y + 7, { width: colWidths[0] - 10 }); x += colWidths[0];
-//     doc.text(user.userName, x + 5, y + 7, { width: colWidths[1] - 10 }); x += colWidths[1];
-//     doc.text(user.department, x + 5, y + 7, { width: colWidths[2] - 10 }); x += colWidths[2];
-
-//     // Status counts with colors
-//     doc.fillColor("#1565c0"); // Ongoing - blue
-//     doc.text(user.ongoing, x + 5, y + 7, { width: colWidths[3] - 10 });
-//     x += colWidths[3];
-
-//     doc.fillColor("#c62828"); // Overdue - red
-//     doc.text(user.overdue, x + 5, y + 7, { width: colWidths[4] - 10 });
-//     x += colWidths[4];
-
-//     doc.fillColor("#2e7d32"); // Completed - green
-//     doc.text(user.complete, x + 5, y + 7, { width: colWidths[5] - 10 });
-
-//     y += rowHeight;
-//   });
-
-//   y += 20;
-// }
-
-//       // ===== OWNER SUMMARY TABLE =====
-//       if (deptName.toLowerCase() === "owner") {
-//         const organizationid = deptGroups.Owner[0].organizationid
-//         console.log("deptName.Owner[0].organizationid",deptGroups.Owner[0].organizationid)
-//         const summaryData = await fetchDepartmentSummary(startDate, endDate,organizationid);
-//         const headers = ["#", "Department", "Ongoing", "Overdue", "Completed"];
-//         const colWidths = [30, 200, 100, 100, 100];
-//         const rowHeight = 25;
-//         let x = 40;
-
-//         doc
-//           .fontSize(13)
-//           .font("Helvetica-Bold")
-//           .fillColor("#000000")
-//           .text("All Department Summary", 40, y);
-//         y += 30;
-
-//         const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-//         doc.rect(x, y, totalWidth, rowHeight).fill("#1a237e").stroke();
-//         doc.fillColor("#ffffff").fontSize(11).font("Helvetica-Bold");
-
-//         headers.forEach((header, i) => {
-//           doc.text(header, x + 5, y + 7, { width: colWidths[i] - 10 });
-//           x += colWidths[i];
-//         });
-//         y += rowHeight;
-
-//         summaryData.forEach((dept, i) => {
-//           if (y > 520) {
-//             doc.addPage();
-//             addHeader(doc, orgName, deptName, headerImgPath);
-//             addFooter(doc, footerImgPath);
-//             y = 100;
-//           }
-
-//           let x = 40;
-//           const rowColor = i % 2 === 0 ? "#f5f5f5" : "#ffffff";
-//           doc.rect(x, y, totalWidth, rowHeight).fill(rowColor).stroke();
-//           doc.fillColor("#000000").font("Helvetica").fontSize(10);
-
-//           const row = [
-//             i + 1,
-//             dept.department_name || "Owner",
-//             dept.ongoing_count || 0,
-//             dept.overdue_count || 0,
-//             dept.complete_count || 0,
-//           ];
-
-//           row.forEach((text, j) => {
-//             doc.text(String(text), x + 5, y + 7, { width: colWidths[j] - 10 });
-//             x += colWidths[j];
-//           });
-
-//           x = 40;
-//           colWidths.forEach((width) => {
-//             doc.rect(x, y, width, rowHeight).stroke();
-//             x += width;
-//           });
-
-//           y += rowHeight;
-//         });
-
-//         y += 40;
-//       }
-
-//       // ===== TASK TABLE =====
-//       const headers = ["#", "Title", "Due Days", "Assignee", "Assigned By", "Completion Date", "Frequency"];
-//       const colWidths = [30, 220, 80, 130, 130, 100, 80];
-//       const rowHeight = 25;
-
-//       const statusGroups = deptTasks.reduce((acc, t) => {
-//         const s = (t.status || "unknown").toLowerCase().trim();
-//         if (!acc[s]) acc[s] = [];
-//         acc[s].push(t);
-//         return acc;
-//       }, {});
-
-//       for (const [statusName, statusTasks] of Object.entries(statusGroups)) {
-//         if (y > 520) {
-//           doc.addPage();
-//           addHeader(doc, orgName, deptName, headerImgPath);
-//           addFooter(doc, footerImgPath);
-//           y = 100;
-//         }
-
-//         const count = statusTasks.length;
-//         let color = "#004d40";
-//         if (statusName === "ongoing") color = "#1565c0";
-//         else if (statusName === "complete") color = "#2e7d32";
-//         else if (statusName === "overdue") color = "#c62828";
-
-//         doc
-//           .fontSize(12)
-//           .font("Helvetica-Bold")
-//           .fillColor(color)
-//           .text(`${statusName.toUpperCase()} (${count})`, 40, y);
-//         y += 25;
-
-//         let x = 30;
-//         const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-//         doc.rect(x, y, totalWidth, rowHeight).fill("#1a237e").stroke();
-//         doc.fillColor("#ffffff").fontSize(11).font("Helvetica-Bold");
-
-//         headers.forEach((header, i) => {
-//           doc.text(header, x + 5, y + 7, { width: colWidths[i] - 10 });
-//           x += colWidths[i];
-//         });
-//         y += rowHeight;
-
-//         statusTasks.forEach((t, i) => {
-//   if (y > 520) {
-//     doc.addPage();
-//     addHeader(doc, orgName, deptName, headerImgPath);
-//     addFooter(doc, footerImgPath);
-//     y = 100;
-//   }
-
-//   const description = t.description ? t.description.trim() : "";
-//   let x = 30;
-//   const rowHeightBase = 25;
-//   const descLines = description
-//     ? doc.heightOfString(description, { width: colWidths[1] - 10 })
-//     : 0;
-//   const descHeight = descLines > 0 ? descLines + 8 : 0;
-//   const totalRowHeight = rowHeightBase + descHeight;
-
-//   const row = [
-//     i + 1,
-//     t.title || "",
-//     t.due_days || "0",
-//     t.assignee_name || "",
-//     t.assigner_name || "",
-//     t.completion_date
-//       ? new Date(t.completion_date).toLocaleDateString("en-IN")
-//       : "",
-//     t.task_type_title || "",
-//   ];
-
-//   const rowColor = i % 2 === 0 ? "#f5f5f5" : "#ffffff";
-//   doc.rect(x, y, totalWidth, totalRowHeight).fill(rowColor).stroke();
-//   doc.fillColor("#000000").font("Helvetica").fontSize(10);
-
-//   // Draw each cell value
-//   row.forEach((text, j) => {
-//     if (j === 1) {
-//       // Title + Description
-//       doc.text(String(text), x + 5, y + 7, {
-//         width: colWidths[j] - 10,
-//       });
-//       if (description) {
-//         doc
-//           .font("Helvetica-Oblique")
-//           .fontSize(9)
-//           .fillColor("#424242")
-//           .text(description, x + 5, y + 20, {
-//             width: colWidths[j] - 10,
-//           })
-//           .fillColor("#000000")
-//           .font("Helvetica")
-//           .fontSize(10);
-//       }
-//     } else {
-//       doc.text(String(text), x + 5, y + 7, { width: colWidths[j] - 10 });
-//     }
-//     x += colWidths[j];
-//   });
-
-//   // Draw table borders
-//   x = 30;
-//   colWidths.forEach((width) => {
-//     doc.rect(x, y, width, totalRowHeight).stroke();
-//     x += width;
-//   });
-
-//   y += totalRowHeight;
-// });
-
-//         y += 20;
-//       }
-
-//       doc.end();
-//       await new Promise((resolve) => writeStream.on("finish", resolve));
-
-//       const serverUrl = "http://192.168.20.179:8000/";
-//       const fileUrl = `${serverUrl}uploads/${organizationid}/${deptName.replace(/\s+/g, "_")}/${fileName}`;
-//       reports.push({ organizationid, department: deptName, fileUrl });
-//     }
-//   }
-
-//   return reports;
-// }
-
 async function fetchTaskSummary(period = "weekly", schema = "prosys") {
   const today = moment().tz("Asia/Kolkata");
-  const startDate = "2025-01-01";
+  const startDate = "2024-09-01";
   const endDate = "2025-11-15";
 
   const query = `
-    SELECT
-        t.row_id AS task_id,
-        t.title,
-        t.description,
-        t.completion_date,
-        t.assigned_by,
-        t.assigned_to,
-        t.organizationid,
-        o.organization_name,
-        u1.name AS assigner_name,
-        u2.name AS assignee_name,
-        u2.deptid AS department_id,
-        COALESCE(d.department_name, 'Owner') AS department_name,
-        CASE
-            WHEN t.active_status = 0 THEN 'ongoing'
-            WHEN t.active_status = 1 THEN 'complete'
-            WHEN t.active_status = 2 THEN 'overdue'
-            ELSE 'Unknown'
-        END AS status,
-        CASE
-            WHEN t.task_type = '0' THEN 'Normal'
-            WHEN t.task_type = '1' THEN 'Recurring'
-        END AS task_type_title,
-        CASE
-            WHEN t.active_status = 1 AND t.completion_date < CURRENT_DATE 
-                THEN ABS(t.up_on::date - t.completion_date) 
-            WHEN t.completion_date >= CURRENT_DATE 
-                THEN (t.completion_date - CURRENT_DATE)
-            ELSE ABS(t.completion_date - CURRENT_DATE)
-        END AS due_days
-    FROM ${schema}.tasks t
-    LEFT JOIN ${schema}.users u1 ON t.assigned_by = u1.row_id
-    LEFT JOIN ${schema}.users u2 
-        ON u2.row_id::text IN (SELECT jsonb_array_elements_text(t.assigned_to))
-    LEFT JOIN ${schema}.departments d ON u2.deptid = d.row_id
-    LEFT JOIN ${schema}.organizations o ON t.organizationid = o.row_id
-    WHERE t.completion_date BETWEEN '${startDate}' AND '${endDate}'
-    ORDER BY o.organization_name, d.department_name, t.completion_date;
-    `;
+  SELECT
+      t.row_id AS task_id,
+      t.title,
+      t.description,
+      t.completion_date,
+      t.assigned_by,
+      t.assigned_to,
+      t.organizationid,
+      o.organization_name,
+      u1.name AS assigner_name,
+      u2.name AS assignee_name,
+      u2.deptid AS department_id,
+      COALESCE(d.department_name, 'Owner') AS department_name,
+      CASE
+          WHEN t.active_status = 0 THEN 'ongoing'
+          WHEN t.active_status = 1 THEN 'complete'
+          WHEN t.active_status = 2 THEN 'overdue'
+          ELSE 'Unknown'
+      END AS status,
+      CASE
+          WHEN t.task_type = '0' THEN 'Normal'
+          WHEN t.task_type = '1' THEN 'Recurring'
+      END AS task_type_title,
+      CASE
+          WHEN t.active_status = 1 AND t.completion_date < CURRENT_DATE 
+              THEN ABS(t.up_on::date - t.completion_date) 
+          WHEN t.completion_date >= CURRENT_DATE 
+              THEN (t.completion_date - CURRENT_DATE)
+          ELSE ABS(t.completion_date - CURRENT_DATE)
+      END AS due_days,
+      CASE
+                    WHEN t.completion_date >= CURRENT_DATE 
+                        THEN 'due_in'
+                    ELSE 'overdue_by'
+                END AS due_label
+  FROM ${schema}.tasks t
+  LEFT JOIN ${schema}.users u1 ON t.assigned_by = u1.row_id
+  LEFT JOIN LATERAL jsonb_array_elements_text(t.assigned_to) AS at(user_id)
+      ON TRUE
+  LEFT JOIN ${schema}.users u2 ON u2.row_id::text = at.user_id
+  LEFT JOIN ${schema}.departments d ON u2.deptid = d.row_id
+  LEFT JOIN ${schema}.organizations o ON t.organizationid = o.row_id
+  WHERE t.cr_on::date BETWEEN '${startDate}' AND '${endDate}'
+  ORDER BY o.organization_name, d.department_name, t.completion_date;
+  `;
 
   const result = await queries.custom_query(query);
   return result;
@@ -7224,75 +6742,180 @@ async function fetchTaskSummary(period = "weekly", schema = "prosys") {
 
 async function fetchDepartmentSummary(startDate, endDate, orgID) {
   const query = `
-    WITH task_users AS (
-      SELECT
-        t.row_id,
-        u.row_id AS user_id,
-        u.name AS user_name,
-        d.department_name,
-        t.active_status
-      FROM prosys.tasks t
-      LEFT JOIN LATERAL jsonb_array_elements_text(t.assigned_to) AS assignee(user_id) ON TRUE
-      LEFT JOIN prosys.users u ON u.row_id::text = assignee.user_id
-      LEFT JOIN prosys.departments d ON u.deptid = d.row_id
-      WHERE t.organizationid='${orgID}' and t.completion_date BETWEEN '${startDate}' AND '${endDate}'
-    )
+  WITH task_users AS (
     SELECT
-      COALESCE(department_name, 'Owner') AS department_name,
-      COUNT(*) FILTER (WHERE active_status = 0) AS ongoing_count,
-      COUNT(*) FILTER (WHERE active_status = 1) AS complete_count,
-      COUNT(*) FILTER (WHERE active_status = 2) AS overdue_count
-    FROM task_users
-    GROUP BY department_name
-    ORDER BY department_name;
-  `;
+      t.row_id,
+      u.row_id AS user_id,
+      u.name AS user_name,
+      d.department_name,
+      t.active_status
+    FROM prosys.tasks t
+    LEFT JOIN LATERAL jsonb_array_elements_text(t.assigned_to) AS assignee(user_id) ON TRUE
+    LEFT JOIN prosys.users u ON u.row_id::text = assignee.user_id
+    LEFT JOIN prosys.departments d ON u.deptid = d.row_id
+    WHERE 
+      t.organizationid = '${orgID}' 
+      AND t.completion_date BETWEEN '${startDate}' AND '${endDate}'
+  )
+  SELECT
+    department_name,
+    COUNT(*) FILTER (WHERE active_status = 0) AS ongoing_count,
+    COUNT(*) FILTER (WHERE active_status = 1) AS complete_count,
+    COUNT(*) FILTER (WHERE active_status = 2) AS overdue_count
+  FROM task_users
+  WHERE department_name IS NOT NULL 
+  GROUP BY department_name
+  ORDER BY department_name;
+`;
   return await queries.custom_query(query);
 }
 
-async function generateTaskReportPDF(tasks, period, schema) {
-  const reports = [];
-
-  const today = moment().tz("Asia/Kolkata");
-  //   const startDate = period === "weekly"
-  //       ? today.clone().subtract(30, "days").format("YYYY-MM-DD")
-  //       : today.clone().startOf("month").format("YYYY-MM-DD");
-  //   const endDate = today.format("YYYY-MM-DD");
-
-  //   console.log("startdate",startDate,"enddate",endDate)
-  const startDate = "2025-11-01";
-  const endDate = "2025-11-15";
-
-  function addHeader(doc, orgName, deptName, headerImgPath) {
-    try {
-      if (fs.existsSync(headerImgPath)) {
-        doc.image(headerImgPath, doc.page.margins.left, 10, { width: 100 });
-      }
-    } catch (e) {
-      console.log("Header image not found:", e.message);
+// Utility function to add header
+function addHeader(doc, orgName, deptName, headerImgPath, startDate, endDate) {
+  try {
+    if (fs.existsSync(headerImgPath)) {
+      doc.image(headerImgPath, doc.page.margins.left, 10, { width: 100 });
     }
-
-    doc
-      .fontSize(14)
-      .font("Helvetica-Bold")
-      .fillColor("#000000")
-      .text(`${orgName} - ${deptName} Department`, 150, 25, { align: "left" });
-
-    doc
-      .fontSize(9)
-      .font("Helvetica-Oblique")
-      .fillColor("#424242")
-      .text("Generated by Prosys", 150, 40, { align: "left" });
+  } catch (e) {
+    console.log("Header image not found:", e.message);
   }
 
-  //   function addFooter(doc, footerImgPath) {
-  //     const bottom = doc.page.height - 40;
-  //     try {
-  //       if (fs.existsSync(footerImgPath)) {
-  //         doc.image(footerImgPath, doc.page.margins.left, bottom - 20, { width: 80 });
-  //       }
-  //     } catch (e) { console.log("Footer image not found:", e.message); }
-  //   }
+  doc
+    .fontSize(14)
+    .font("Helvetica-Bold")
+    .fillColor("#000000")
+    .text(`${orgName} - ${deptName}`, 150, 25, { align: "left" });
 
+  // Format dates
+  const formattedStartDate = moment(startDate).format("DD-MM-YYYY");
+  const formattedEndDate = moment(endDate).format("DD-MM-YYYY");
+
+  // Subheader: generated by + date range
+  doc
+    .fontSize(9)
+    .font("Helvetica-Oblique")
+    .fillColor("#424242")
+    .text(
+      `Generated by Prosys | ${formattedStartDate} to ${formattedEndDate}`,
+      150,
+      45,
+      { align: "left" }
+    );
+
+  // Light line under header
+  const lineY = 65;
+  doc
+    .moveTo(doc.page.margins.left, lineY)
+    .lineTo(doc.page.width - doc.page.margins.right, lineY)
+    .lineWidth(0.5)
+    .strokeColor("#b0bec5")
+    .stroke();
+}
+
+// Utility function to add table header
+function drawTableHeader(doc, headers, colWidths, x, y, headerBg = "#1a237e") {
+  const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+
+  // Draw header background
+  doc.rect(x, y, totalWidth, 25).fill(headerBg).stroke();
+
+  doc.fillColor("#ffffff").fontSize(11).font("Helvetica-Bold");
+
+  let xPos = x;
+  headers.forEach((header, i) => {
+    doc.text(header, xPos + 5, y + 7, { width: colWidths[i] - 10 });
+
+    // Draw vertical border line for each column
+    doc
+      .moveTo(xPos, y)
+      .lineTo(xPos, y + 25)
+      .lineWidth(0.3)
+      .strokeColor("#b0bec5")
+      .stroke();
+
+    xPos += colWidths[i];
+  });
+
+  // Draw right-most vertical border
+  doc
+    .moveTo(xPos, y)
+    .lineTo(xPos, y + 25)
+    .lineWidth(0.3)
+    .strokeColor("#b0bec5")
+    .stroke();
+
+  // Draw bottom horizontal border
+  doc
+    .moveTo(x, y + 25)
+    .lineTo(x + totalWidth, y + 25)
+    .lineWidth(0.3)
+    .strokeColor("#b0bec5")
+    .stroke();
+
+  return y + 25;
+}
+
+// Utility function to add table rows
+function drawTableRow(
+  doc,
+  row,
+  colWidths,
+  x,
+  y,
+  rowHeight,
+  rowColor = "#ffffff"
+) {
+  const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+
+  // Draw row background
+  doc.rect(x, y, totalWidth, rowHeight).fill(rowColor).stroke();
+
+  doc.fillColor("#000000").font("Helvetica").fontSize(10);
+
+  let xPos = x;
+  row.forEach((text, i) => {
+    doc.text(String(text), xPos + 5, y + 7, { width: colWidths[i] - 10 });
+
+    // Draw vertical border
+    doc
+      .moveTo(xPos, y)
+      .lineTo(xPos, y + rowHeight)
+      .lineWidth(0.3)
+      .strokeColor("#b0bec5")
+      .stroke();
+
+    xPos += colWidths[i];
+  });
+
+  // Draw right-most vertical border
+  doc
+    .moveTo(xPos, y)
+    .lineTo(xPos, y + rowHeight)
+    .lineWidth(0.3)
+    .strokeColor("#b0bec5")
+    .stroke();
+
+  // Draw bottom horizontal border
+  doc
+    .moveTo(x, y + rowHeight)
+    .lineTo(x + totalWidth, y + rowHeight)
+    .lineWidth(0.3)
+    .strokeColor("#b0bec5")
+    .stroke();
+
+  return y + rowHeight;
+}
+
+// Main PDF generator
+async function generateTaskReportPDF(tasks, period, schema) {
+  const reports = [];
+  const MARGIN_LEFT = 40,
+    MARGIN_RIGHT = 30;
+  const today = moment().tz("Asia/Kolkata");
+  const startDate = "2024-09-01";
+  const endDate = "2025-11-15";
+
+  // Group tasks by organization
   const orgGroups = tasks.reduce((acc, task) => {
     const orgId = task.organizationid || "unknown_org";
     if (!acc[orgId]) acc[orgId] = [];
@@ -7303,9 +6926,11 @@ async function generateTaskReportPDF(tasks, period, schema) {
   for (const [organizationid, orgTasks] of Object.entries(orgGroups)) {
     const orgName = orgTasks[0]?.organization_name || "Unknown Organization";
 
+    // Create org folder
     const orgFolder = path.join("./public/uploads", organizationid);
     if (!fs.existsSync(orgFolder)) fs.mkdirSync(orgFolder, { recursive: true });
 
+    // Group tasks by department
     const deptGroups = orgTasks.reduce((acc, t) => {
       const dept = t.department_name || "Owner";
       if (!acc[dept]) acc[dept] = [];
@@ -7325,206 +6950,181 @@ async function generateTaskReportPDF(tasks, period, schema) {
       const filePath = path.join(deptFolder, fileName);
 
       const doc = new PDFDocument({
-        margin: 40,
+        margin: 10,
         size: "A4",
         layout: "landscape",
       });
       const writeStream = fs.createWriteStream(filePath);
       doc.pipe(writeStream);
 
-      const rootPath = __dirname.slice(0, 32);
+      const rootPath = __dirname.slice(0, 28);
+      console.log("v", rootPath);
       const headerImgPath = path.join(
-        rootPath,
-        "uploads/image",
-        "prosyslogo.png"
-      );
-      const footerImgPath = path.join(
         rootPath,
         "uploads/image",
         "prosyslogo.png"
       );
 
       addHeader(doc, orgName, deptName, headerImgPath);
-      //   addFooter(doc, footerImgPath);
-
       let y = 70;
 
-      doc
-        .fontSize(9)
-        .font("Helvetica")
-        .text(`Period: ${startDate} to ${endDate}`, { align: "right" })
-        .moveDown(1);
+      // doc.fontSize(9).font("Helvetica").text(`${startDate} to ${endDate}`, { align: "left" });
       y += 30;
 
-      // ===== OWN TASK SUMMARY WITH COLOR LABELS =====
-      const ownSummary = {
-        ongoing: deptTasks.filter((t) => t.status.toLowerCase() === "ongoing")
-          .length,
-        complete: deptTasks.filter((t) => t.status.toLowerCase() === "complete")
-          .length,
-        overdue: deptTasks.filter((t) => t.status.toLowerCase() === "overdue")
-          .length,
-      };
+      // Task Summary Overview
+      let ownSummary = { ongoing: 0, complete: 0, overdue: 0 };
 
-      doc
-        .fontSize(13)
-        .font("Helvetica-Bold")
-        .fillColor("#000000")
-        .text("Task Summary Overview", 40, y);
-      y += 25;
-
-      const labelWidth = 100,
-        labelHeight = 25,
-        spacing = 20;
-      let x = 40;
-
-      // Blue — Ongoing
-      doc.rect(x, y, labelWidth, labelHeight).fill("#1565c0").stroke();
-      doc
-        .fillColor("#ffffff")
-        .font("Helvetica-Bold")
-        .fontSize(11)
-        .text(`Ongoing: ${ownSummary.ongoing}`, x + 8, y + 7);
-      x += labelWidth + spacing;
-
-      // Red — Overdue
-      doc.rect(x, y, labelWidth, labelHeight).fill("#c62828").stroke();
-      doc
-        .fillColor("#ffffff")
-        .text(`Overdue: ${ownSummary.overdue}`, x + 8, y + 7);
-      x += labelWidth + spacing;
-
-      // Green — Completed
-      doc.rect(x, y, labelWidth, labelHeight).fill("#2e7d32").stroke();
-      doc
-        .fillColor("#ffffff")
-        .text(`Completed: ${ownSummary.complete}`, x + 8, y + 7);
-
-      y += labelHeight + 30;
-
-      // ===== USER-WISE SUMMARY TABLE =====
-      const userGroups = deptTasks.reduce((acc, task) => {
-        const user = task.assignee_name || "Unassigned";
-        if (!acc[user]) acc[user] = [];
-        acc[user].push(task);
-        return acc;
-      }, {});
-
-      // Build summary
-      let userSummary = Object.entries(userGroups).map(([userName, tasks]) => ({
-        userName,
-        department: tasks[0]?.department_name || "Owner",
-        ongoing: tasks.filter((t) => t.status.toLowerCase() === "ongoing")
-          .length,
-        overdue: tasks.filter((t) => t.status.toLowerCase() === "overdue")
-          .length,
-        complete: tasks.filter((t) => t.status.toLowerCase() === "complete")
-          .length,
-      }));
-
-      // Sort by overdue count (desc)
-      userSummary.sort((a, b) => b.overdue - a.overdue);
-
-      // Identify top 3 users
-      const top3UserNames = userSummary.slice(0, 3).map((u) => u.userName);
-
-      if (userSummary.length > 0) {
+      if (deptName.toLowerCase() !== "owner") {
+        ownSummary = {
+          ongoing: deptTasks.filter((t) => t.status.toLowerCase() === "ongoing")
+            .length,
+          complete: deptTasks.filter(
+            (t) => t.status.toLowerCase() === "complete"
+          ).length,
+          overdue: deptTasks.filter((t) => t.status.toLowerCase() === "overdue")
+            .length,
+        };
         doc
           .fontSize(13)
           .font("Helvetica-Bold")
-          .fillColor("#000000")
-          .text("User-wise Task Summary", 40, y);
-        y += 25;
-
-        const headers = [
-          "#",
-          "User Name",
-          "Department",
-          "Ongoing",
-          "Overdue",
-          "Completed",
-        ];
-        const colWidths = [30, 150, 150, 80, 80, 80];
-        const rowHeight = 25;
-
-        let x = 40;
-        const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-
-        // Table Header
-        doc.rect(x, y, totalWidth, rowHeight).fill("#1a237e").stroke();
-        doc.fillColor("#ffffff").fontSize(11).font("Helvetica-Bold");
-        headers.forEach((header, i) => {
-          doc.text(header, x + 5, y + 7, { width: colWidths[i] - 10 });
-          x += colWidths[i];
-        });
-        y += rowHeight;
-
-        // Rows
-        userSummary.forEach((user, idx) => {
-          if (y > 500) {
-            doc.addPage();
-            addHeader(doc, orgName, deptName, headerImgPath);
-            addFooter(doc, footerImgPath);
-            y = 100;
-          }
-
-          let x = 40;
-
-          // Highlight top 3 users with gradient color
-          let rowColor = idx % 2 === 0 ? "#f5f5f5" : "#ffffff";
-          if (top3UserNames.includes(user.userName)) {
-            // Light gold for top 1, silver for top 2, bronze for top 3
-            if (idx === 0) rowColor = "#fff8e1"; // gold
-            else if (idx === 1) rowColor = "#e0f7fa"; // silver-blue
-            else if (idx === 2) rowColor = "#f3e5f5"; // bronze-purple
-          }
-
-          doc.rect(x, y, totalWidth, rowHeight).fill(rowColor).stroke();
-          doc.font("Helvetica").fontSize(10);
-
-          // Normal text
-          doc.fillColor("#000000");
-          doc.text(idx + 1, x + 5, y + 7, { width: colWidths[0] - 10 });
-          x += colWidths[0];
-          doc.text(user.userName, x + 5, y + 7, { width: colWidths[1] - 10 });
-          x += colWidths[1];
-          doc.text(user.department, x + 5, y + 7, { width: colWidths[2] - 10 });
-          x += colWidths[2];
-
-          // Status counts with colors
-          doc.fillColor("#1565c0"); // Ongoing - blue
-          doc.text(user.ongoing, x + 5, y + 7, { width: colWidths[3] - 10 });
-          x += colWidths[3];
-
-          doc.fillColor("#c62828"); // Overdue - red
-          doc.text(user.overdue, x + 5, y + 7, { width: colWidths[4] - 10 });
-          x += colWidths[4];
-
-          doc.fillColor("#2e7d32"); // Completed - green
-          doc.text(user.complete, x + 5, y + 7, { width: colWidths[5] - 10 });
-
-          y += rowHeight;
-        });
-
-        y += 20;
-      }
-
-      // ===== OWNER SUMMARY TABLE =====
-      if (deptName.toLowerCase() === "owner") {
-        const organizationid = deptGroups.Owner[0].organizationid;
-        console.log(
-          "deptName.Owner[0].organizationid",
-          deptGroups.Owner[0].organizationid
-        );
+          .fillColor("#000")
+          .text("Task Summary Overview", 40, y);
+      } else {
+        // Owner case → total from all departments
         const summaryData = await fetchDepartmentSummary(
           startDate,
           endDate,
           organizationid
         );
-        const headers = ["#", "Department", "Ongoing", "Overdue", "Completed"];
-        const colWidths = [30, 200, 100, 100, 100];
-        const rowHeight = 25;
-        let x = 40;
+        ownSummary = {
+          ongoing: summaryData.reduce(
+            (sum, d) => sum + Number(d.ongoing_count || 0),
+            0
+          ),
+          overdue: summaryData.reduce(
+            (sum, d) => sum + Number(d.overdue_count || 0),
+            0
+          ),
+          complete: summaryData.reduce(
+            (sum, d) => sum + Number(d.complete_count || 0),
+            0
+          ),
+        };
+        doc
+          .fontSize(13)
+          .font("Helvetica-Bold")
+          .fillColor("#000")
+          .text("Task Summary Overview (All Departments)", 40, y);
+      }
+      y += 25;
+
+      // Draw summary boxes
+      const labelWidth = 100,
+        labelHeight = 25,
+        spacing = 20;
+      let x = MARGIN_RIGHT;
+
+      const summaryColors = {
+        ongoing: "#1565c0",
+        overdue: "#c62828",
+        complete: "#2e7d32",
+      };
+      for (const key of ["ongoing", "overdue", "complete"]) {
+        doc
+          .rect(x, y, labelWidth, labelHeight)
+          .fill(summaryColors[key])
+          .stroke();
+        doc
+          .fillColor("#fff")
+          .font("Helvetica-Bold")
+          .fontSize(11)
+          .text(
+            `${key.charAt(0).toUpperCase() + key.slice(1)}: ${ownSummary[key]}`,
+            x + 8,
+            y + 7
+          );
+        x += labelWidth + spacing;
+      }
+      y += labelHeight + 30;
+
+      // User-wise summary (normal department)
+      if (deptName.toLowerCase() !== "owner") {
+        const userGroups = deptTasks.reduce((acc, task) => {
+          const user = task.assignee_name || "Unassigned";
+          if (!acc[user]) acc[user] = [];
+          acc[user].push(task);
+          return acc;
+        }, {});
+
+        const userSummary = Object.entries(userGroups).map(
+          ([userName, tasks]) => ({
+            userName,
+            department: tasks[0]?.department_name || "Owner",
+            ongoing: tasks.filter((t) => t.status.toLowerCase() === "ongoing")
+              .length,
+            overdue: tasks.filter((t) => t.status.toLowerCase() === "overdue")
+              .length,
+            complete: tasks.filter((t) => t.status.toLowerCase() === "complete")
+              .length,
+          })
+        );
+
+        if (userSummary.length > 0) {
+          doc
+            .fontSize(13)
+            .font("Helvetica-Bold")
+            .fillColor("#000")
+            .text("User-wise Task Summary", 40, y);
+          y += 25;
+
+          const headers = [
+            "#",
+            "User Name",
+            "Department",
+            "Ongoing",
+            "Overdue",
+            "Completed",
+          ];
+          const colWidths = [30, 150, 150, 80, 80, 80];
+          y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
+
+          userSummary.forEach((user, idx) => {
+            if (y > 500) {
+              doc.addPage();
+              addHeader(doc, orgName, deptName, headerImgPath);
+              y = 100;
+              y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
+            }
+            const rowColor = idx % 2 === 0 ? "#f5f5f5" : "#ffffff";
+            const row = [
+              idx + 1,
+              user.userName,
+              user.department,
+              user.ongoing,
+              user.overdue,
+              user.complete,
+            ];
+            y = drawTableRow(
+              doc,
+              row,
+              colWidths,
+              MARGIN_RIGHT,
+              y,
+              25,
+              rowColor
+            );
+          });
+
+          y += 20;
+        }
+      }
+
+      if (deptName.toLowerCase() === "owner") {
+        const summaryData = await fetchDepartmentSummary(
+          startDate,
+          endDate,
+          organizationid
+        );
 
         doc
           .fontSize(13)
@@ -7533,29 +7133,21 @@ async function generateTaskReportPDF(tasks, period, schema) {
           .text("All Department Summary", 40, y);
         y += 30;
 
-        const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-        doc.rect(x, y, totalWidth, rowHeight).fill("#1a237e").stroke();
-        doc.fillColor("#ffffff").fontSize(11).font("Helvetica-Bold");
+        const headers = ["#", "Department", "Ongoing", "Overdue", "Completed"];
+        const colWidths = [30, 200, 100, 100, 100];
+        const rowHeight = 25;
 
-        headers.forEach((header, i) => {
-          doc.text(header, x + 5, y + 7, { width: colWidths[i] - 10 });
-          x += colWidths[i];
-        });
-        y += rowHeight;
+        y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
 
         summaryData.forEach((dept, i) => {
-          if (y > 520) {
+          if (y + rowHeight > doc.page.height - 80) {
             doc.addPage();
             addHeader(doc, orgName, deptName, headerImgPath);
-            // addFooter(doc, footerImgPath);
             y = 100;
+            y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
           }
 
-          let x = 40;
           const rowColor = i % 2 === 0 ? "#f5f5f5" : "#ffffff";
-          doc.rect(x, y, totalWidth, rowHeight).fill(rowColor).stroke();
-          doc.fillColor("#000000").font("Helvetica").fontSize(10);
-
           const row = [
             i + 1,
             dept.department_name || "Owner",
@@ -7563,36 +7155,131 @@ async function generateTaskReportPDF(tasks, period, schema) {
             dept.overdue_count || 0,
             dept.complete_count || 0,
           ];
-
-          row.forEach((text, j) => {
-            doc.text(String(text), x + 5, y + 7, { width: colWidths[j] - 10 });
-            x += colWidths[j];
-          });
-
-          x = 40;
-          colWidths.forEach((width) => {
-            doc.rect(x, y, width, rowHeight).stroke();
-            x += width;
-          });
-
-          y += rowHeight;
+          y = drawTableRow(
+            doc,
+            row,
+            colWidths,
+            MARGIN_RIGHT,
+            y,
+            rowHeight,
+            rowColor
+          );
         });
 
         y += 40;
+
+        // Optionally, show users per department
+        for (const dept of summaryData) {
+          if (y > 500) {
+            doc.addPage();
+            addHeader(doc, orgName, deptName, headerImgPath);
+            y = 100;
+          }
+
+          doc
+            .fontSize(12)
+            .font("Helvetica-Bold")
+            .fillColor("#0d47a1")
+            .text(`Department: ${dept.department_name}`, 40, y);
+          y += 25;
+
+          // Fetch users for this department, same as previous logic...
+          const userSummaryQuery = `
+            WITH task_users AS (
+                SELECT
+                    t.row_id,
+                    u.row_id AS user_id,
+                    u.name AS user_name,
+                    d.department_name,
+                    t.active_status
+                FROM prosys.tasks t
+                LEFT JOIN LATERAL jsonb_array_elements_text(t.assigned_to) AS assignee(user_id) ON TRUE
+                LEFT JOIN prosys.users u ON u.row_id::text = assignee.user_id
+                LEFT JOIN prosys.departments d ON u.deptid = d.row_id
+                WHERE 
+                    t.organizationid = '${organizationid}'
+                    AND d.department_name = '${dept.department_name}'
+                    AND t.completion_date BETWEEN '${startDate}' AND '${endDate}'
+            )
+            SELECT
+                user_name,
+                COUNT(*) FILTER (WHERE active_status = 0) AS ongoing_count,
+                COUNT(*) FILTER (WHERE active_status = 1) AS complete_count,
+                COUNT(*) FILTER (WHERE active_status = 2) AS overdue_count
+            FROM task_users
+            WHERE user_name IS NOT NULL 
+            GROUP BY user_name
+            ORDER BY user_name;
+        `;
+          const userSummary = await queries.custom_query(userSummaryQuery);
+
+          if (userSummary.length === 0) {
+            doc
+              .fontSize(10)
+              .fillColor("#777")
+              .text("No user data found", 60, y);
+            y += 20;
+            continue;
+          }
+
+          const userHeaders = [
+            "#",
+            "User Name",
+            "Ongoing",
+            "Overdue",
+            "Completed",
+          ];
+          const userColWidths = [30, 200, 100, 100, 100];
+          y = drawTableHeader(doc, userHeaders, userColWidths, MARGIN_RIGHT, y);
+
+          userSummary.forEach((u, i) => {
+            if (y > 520) {
+              doc.addPage();
+              addHeader(doc, orgName, deptName, headerImgPath);
+              y = 100;
+              y = drawTableHeader(
+                doc,
+                userHeaders,
+                userColWidths,
+                MARGIN_RIGHT,
+                y
+              );
+            }
+
+            const rowColor = i % 2 === 0 ? "#fafafa" : "#ffffff";
+            const row = [
+              i + 1,
+              u.user_name,
+              u.ongoing_count || 0,
+              u.overdue_count || 0,
+              u.complete_count || 0,
+            ];
+            y = drawTableRow(
+              doc,
+              row,
+              userColWidths,
+              MARGIN_RIGHT,
+              y,
+              25,
+              rowColor
+            );
+          });
+
+          y += 40;
+        }
       }
 
-      // ===== TASK TABLE =====
+      // ===== TASK DETAILS TABLE =====
       const headers = [
         "#",
         "Title",
-        "Due Days",
+        "Due",
         "Assignee",
-        "Assigned By",
-        "Completion Date",
+        "Assigned",
+        "CompletionDate",
         "Frequency",
       ];
-      const colWidths = [30, 220, 80, 130, 130, 100, 80];
-      const rowHeight = 25;
+      const colWidths = [30, 220, 40, 80, 80, 100, 80];
 
       const statusGroups = deptTasks.reduce((acc, t) => {
         const s = (t.status || "unknown").toLowerCase().trim();
@@ -7602,19 +7289,19 @@ async function generateTaskReportPDF(tasks, period, schema) {
       }, {});
 
       for (const [statusName, statusTasks] of Object.entries(statusGroups)) {
-        if (y > 520) {
+        if (y > 500) {
           doc.addPage();
           addHeader(doc, orgName, deptName, headerImgPath);
-          //   addFooter(doc, footerImgPath);
           y = 100;
         }
 
         const count = statusTasks.length;
-        let color = "#004d40";
-        if (statusName === "ongoing") color = "#1565c0";
-        else if (statusName === "complete") color = "#2e7d32";
-        else if (statusName === "overdue") color = "#c62828";
-
+        const color =
+          statusName === "ongoing"
+            ? "#1565c0"
+            : statusName === "complete"
+            ? "#2e7d32"
+            : "#c62828";
         doc
           .fontSize(12)
           .font("Helvetica-Bold")
@@ -7622,38 +7309,44 @@ async function generateTaskReportPDF(tasks, period, schema) {
           .text(`${statusName.toUpperCase()} (${count})`, 40, y);
         y += 25;
 
-        let x = 30;
-        const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-        doc.rect(x, y, totalWidth, rowHeight).fill("#1a237e").stroke();
-        doc.fillColor("#ffffff").fontSize(11).font("Helvetica-Bold");
+        y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
 
-        headers.forEach((header, i) => {
-          doc.text(header, x + 5, y + 7, { width: colWidths[i] - 10 });
-          x += colWidths[i];
-        });
-        y += rowHeight;
-
-        statusTasks.forEach((t, i) => {
-          if (y > 520) {
-            doc.addPage();
-            addHeader(doc, orgName, deptName, headerImgPath);
-            // addFooter(doc, footerImgPath);
-            y = 100;
-          }
-
-          const description = t.description ? t.description.trim() : "";
-          let x = 30;
-          const rowHeightBase = 25;
-          const descLines = description
+        for (let i = 0; i < statusTasks.length; i++) {
+          const t = statusTasks[i];
+          const description = t.description || "";
+          const descHeight = description
             ? doc.heightOfString(description, { width: colWidths[1] - 10 })
             : 0;
-          const descHeight = descLines > 0 ? descLines + 8 : 0;
-          const totalRowHeight = rowHeightBase + descHeight;
+          const totalRowHeight = 25 + descHeight + 10;
 
-          const row = [
+          if (y + totalRowHeight > doc.page.height - 80) {
+            doc.addPage();
+            addHeader(doc, orgName, deptName, headerImgPath);
+            y = 100;
+            y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
+          }
+
+          const rowColor = i % 2 === 0 ? "#f9f9f9" : "#ffffff";
+          // let rowData = [
+          //   i + 1,
+          //   t.title + (description ? `\n${description}` : ""),
+          //   t.due_days || 0,
+          //   t.assignee_name || "",
+          //   t.assigner_name || "",
+          //   t.completion_date ? new Date(t.completion_date).toLocaleDateString("en-IN") : "",
+          //   t.task_type_title || "",
+          // ];
+          // y = drawTableRow(doc, rowData, colWidths, MARGIN_RIGHT, y, totalRowHeight, rowColor);
+
+          const dueLabel =
+            t.due_days < 0
+              ? `Overdue by ${Math.abs(t.due_days)} day(s)`
+              : `Due in ${t.due_days} day(s)`;
+
+          let rowData = [
             i + 1,
-            t.title || "",
-            t.due_days || "0",
+            t.title + (description ? `\n${description}` : ""),
+            dueLabel, // <-- updated here
             t.assignee_name || "",
             t.assigner_name || "",
             t.completion_date
@@ -7661,54 +7354,19 @@ async function generateTaskReportPDF(tasks, period, schema) {
               : "",
             t.task_type_title || "",
           ];
-
-          const rowColor = i % 2 === 0 ? "#f5f5f5" : "#ffffff";
-          doc.rect(x, y, totalWidth, totalRowHeight).fill(rowColor).stroke();
-          doc.fillColor("#000000").font("Helvetica").fontSize(10);
-
-          // Draw each cell value
-          row.forEach((text, j) => {
-            if (j === 1) {
-              // Title + Description
-              doc.text(String(text), x + 5, y + 7, {
-                width: colWidths[j] - 10,
-              });
-              if (description) {
-                doc
-                  .font("Helvetica-Oblique")
-                  .fontSize(9)
-                  .fillColor("#424242")
-                  .text(description, x + 5, y + 20, {
-                    width: colWidths[j] - 10,
-                  })
-                  .fillColor("#000000")
-                  .font("Helvetica")
-                  .fontSize(10);
-              }
-            } else {
-              doc.text(String(text), x + 5, y + 7, {
-                width: colWidths[j] - 10,
-              });
-            }
-            x += colWidths[j];
-          });
-
-          // Draw table borders
-          x = 30;
-          colWidths.forEach((width) => {
-            doc.rect(x, y, width, totalRowHeight).stroke();
-            x += width;
-          });
-
-          y += totalRowHeight;
-        });
+          y = drawTableRow(
+            doc,
+            rowData,
+            colWidths,
+            MARGIN_RIGHT,
+            y,
+            totalRowHeight,
+            rowColor
+          );
+        }
 
         y += 20;
       }
-
-      const departmentid = deptTasks[0]?.department_id || null;
-
-      //   console.log("deppppppppp",deptTasks)
 
       doc.end();
       await new Promise((resolve) => writeStream.on("finish", resolve));
@@ -7721,7 +7379,7 @@ async function generateTaskReportPDF(tasks, period, schema) {
       reports.push({
         organizationid,
         department: deptName,
-        departmentid,
+        departmentid: deptTasks[0]?.department_id || null,
         fileUrl,
       });
     }
@@ -7730,21 +7388,9 @@ async function generateTaskReportPDF(tasks, period, schema) {
   return reports;
 }
 
-// async function test_cron_reports(){
-//  const tasks = await fetchTaskSummary("weekly");
-// //  const tasks = await fetchTaskSummary("monthly");
-// //  console.log("tasks---->",tasks)
-//     const filePath = await generateTaskReportPDF(tasks, "weekly");
-//     // const filePath = await generateTaskReportPDF(tasks, "monthly");
-//     console.log("filePath----->",filePath)
-//     // await sendReportEmail("team@company.com", "Weekly Task Summary", "Attached is the weekly task summary.", filePath);
-// }
-
-// test_cron_reports()
-
 async function getOwnerNumber(orgId) {
   const q = `SELECT mobilenumber FROM prosys.users 
-               WHERE role=1 AND organizationid='${orgId}' LIMIT 1`;
+             WHERE role=1 AND organizationid='${orgId}' LIMIT 1`;
   const r = await queries.custom_query(q, "OK");
   console.log("r- getOwnerNumber", r);
   return r?.[0]?.mobilenumber || null;
@@ -7752,7 +7398,7 @@ async function getOwnerNumber(orgId) {
 
 async function getDepartmentAdmin(orgId, department) {
   const q = `SELECT mobilenumber FROM prosys.users 
-               WHERE role=2 AND organizationid='${orgId}' AND deptid='${department}' LIMIT 1`;
+             WHERE role=2 AND organizationid='${orgId}' AND deptid='${department}' LIMIT 1`;
   const r = await queries.custom_query(q, "OK");
   console.log("r - getDepartmentAdmin", r);
   return r?.[0]?.mobilenumber || null;
@@ -7829,4 +7475,4 @@ async function runCronfun1() {
   await processTaskReport("weekly");
 }
 
-// runCronfun1();
+runCronfun1();
