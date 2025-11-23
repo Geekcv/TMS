@@ -17,7 +17,7 @@ const { sendNotification } = require("./firebase_notification/fb_connect.js");
 // const auth_config = require('./authentication/config.js');
 // const auth = require('./authentication/connect.js');
 const ExcelJS = require("exceljs");
-const moment = require("moment-timezone");
+// const moment = require('moment-timezone');
 const queries = require("./connect_db/queries.js");
 const PDFDocument = require("pdfkit");
 
@@ -201,7 +201,7 @@ async function registerOrganization(req, res) {
 
 function checkLoginUser(username, password) {
   return new Promise((resolve, reject) => {
-    var query = `SELECT * FROM ${schema}.users where (email=$1 OR mobilenumber=$1) and password=$2 and activestatus=0`;
+    var query = `SELECT * FROM ${schema}.users where (email=$1 OR mobilenumber=$1) and password=$2`;
     var queryparam = [username, password];
     // console.log("query===========");
     // console.log(query);
@@ -303,16 +303,25 @@ async function loginAppUser(req, res) {
     var checkUser = await checkLoginUser(username, password);
     // console.log("checkUser---", checkUser);
     if (checkUser) {
+      if (checkUser.activestatus != 0) {
+        return libFunc.sendResponse(res, {
+          status: 1,
+          msg: "Your account is inactive. Please contact admin.",
+        });
+      }
+
       var rowId = checkUser.row_id;
       var jwtData = {
         userId: rowId,
         orgId: checkUser.organizationid,
         role: checkUser.role,
+        depId: checkUser.deptid,
       };
       // console.log("jwtData", jwtData);
       // var role = checkUser.role == 0 ? "user" : "admin";
       // var role = checkUser.role == 0 ? "user" : "admin";
       // console.log("role",checkUser.role)
+      // const role = checkUser.role == 0 ? 'user' : checkUser.role == 1 ? 'admin' : checkUser.role == 2 ? 'dept-admin' : 'super-admin';
       const role =
         checkUser.role == 0
           ? "user"
@@ -320,6 +329,8 @@ async function loginAppUser(req, res) {
           ? "admin"
           : checkUser.role == 2
           ? "dept-admin"
+          : checkUser.role == 3
+          ? "top-management"
           : "super-admin";
 
       var token = jwt.sign(
@@ -798,14 +809,28 @@ async function fetchUserList(req, res) {
   var offset = (page - 1) * limit;
   let query, params;
   if (isTeam) {
-    query = `SELECT us.name,us.row_id,de.department_name as dep_name,us.image_url as photo_path
+    query = `SELECT us.name,us.row_id,de.department_name as dep_name,us.image_url as photo_path,
+         CASE 
+                WHEN us.role = 0 THEN 'User'
+                WHEN us.role = 1 THEN 'Admin'
+                WHEN us.role = 2 THEN 'Dept-admin'
+                WHEN us.role = 3 THEN 'Top-management'
+                ELSE 'unknown'
+            END AS rolevalue
             FROM ${schema}.users us
             LEFT JOIN ${schema}.departments de on us.deptid=de.row_id
             WHERE us.organizationid = $1 AND us.row_id <> $2 AND us.activestatus = 0
             ORDER BY us.deptid, us.cr_on DESC LIMIT $3 OFFSET $4`;
     params = [organizationid, req.data.userId, limit, offset];
   } else {
-    query = `SELECT us.name,us.row_id,us.image_url as photo_path,de.department_name as dep_name
+    query = `SELECT us.name,us.row_id,us.image_url as photo_path,de.department_name as dep_name,
+         CASE 
+                WHEN us.role = 0 THEN 'User'
+                WHEN us.role = 1 THEN 'Admin'
+                WHEN us.role = 2 THEN 'Dept-admin'
+                WHEN us.role = 3 THEN 'Top-management'
+                ELSE 'unknown'
+            END AS rolevalue
             FROM ${schema}.users us
             LEFT JOIN ${schema}.departments de on us.deptid=de.row_id
             WHERE us.organizationid = $1 AND us.activestatus = 0
@@ -1112,7 +1137,7 @@ async function fetchInactiveTask(req, res) {
 
 async function createAppUser(req, res) {
   const organizationid = req.data.orgId;
-  const deptid = req.data.department_id;
+  const deptid = req.data.department_id || null;
   const email = req.data.email.trim();
   // const mobilenumber = "7742529160";
   const mobilenumber = req.data.mobilenumber.trim();
@@ -1126,52 +1151,66 @@ async function createAppUser(req, res) {
       ? JSON.stringify(req.data.Top_duties).replaceAll("'", "`")
       : undefined;
 
-  // if (!deptid || !email || !password || !name) {
-  if (!deptid || !password || !name || !mobilenumber) {
-    const resp = { status: 1, msg: "Missing required fields" };
-    // console.log("response of validation ", resp);
-    libFunc.sendResponse(res, resp);
-  } else {
-    var checkEmail = await checkEmailExist(email);
-    var checkMob = await checkMobExist(mobilenumber);
-    // if (checkEmail) {
-
-    //     const resp = { status: 1, msg: "Email already exists" };
-    //     // console.log("response of validation ", resp);
-    //     libFunc.sendResponse(res, resp);
-    // }
-    // else
-    if (checkMob) {
-      const resp = { status: 1, msg: "Mobile Number already exists" };
-      // console.log("response of validation ", resp);
-      libFunc.sendResponse(res, resp);
-    } else {
-      var columns = {
-        organizationid: organizationid,
-        deptid: deptid,
-        email: email,
-        password: password,
-        role: role,
-        name: name,
-        image_url: image_url,
-        mobilenumber: mobilenumber,
-        duties: duties,
-      };
-
-      // console.log("data---",columns)
-      var tablename = schema + ".users";
-      var resp = await db_query.addData(
-        tablename,
-        columns,
-        req.data.row_id,
-        "User"
-      );
-      var smsmessage = `You are registered.`;
-      // var resp1 = await send_sms(mobilenumber, smsmessage, 0);
-      // console.log("resp", resp);
-      libFunc.sendResponse(res, resp);
+  //  Top Management user: department_id NOT required
+  if (role === "3") {
+    if (!password || !name || !mobilenumber) {
+      console.log("Missing required fields for Top Management");
+      return libFunc.sendResponse(res, {
+        status: 1,
+        msg: "Missing required fields for Top Management",
+      });
     }
   }
+  //  Dept-admin/user: department_id IS required
+  if (role === "1" || role === "2") {
+    if (!deptid || !password || !name || !mobilenumber) {
+      console.log("Missing required fields");
+      return libFunc.sendResponse(res, {
+        status: 1,
+        msg: "Missing required fields",
+      });
+    }
+  }
+
+  var checkEmail = await checkEmailExist(email);
+  var checkMob = await checkMobExist(mobilenumber);
+  // if (checkEmail) {
+
+  //     const resp = { status: 1, msg: "Email already exists" };
+  //     // console.log("response of validation ", resp);
+  //     libFunc.sendResponse(res, resp);
+  // }
+  // else
+  if (checkMob) {
+    const resp = { status: 1, msg: "Mobile Number already exists" };
+    // console.log("response of validation ", resp);
+    return libFunc.sendResponse(res, resp);
+  }
+  var columns = {
+    organizationid: organizationid,
+    deptid: role === "3" ? "" : deptid, //  Top Management has no department
+    email: email,
+    password: password,
+    role: role,
+    name: name,
+    image_url: image_url,
+    mobilenumber: mobilenumber,
+    duties: duties,
+  };
+
+  // console.log("columns---",columns)
+  var tablename = schema + ".users";
+  var resp = await db_query.addData(
+    tablename,
+    columns,
+    req.data.row_id,
+    "User"
+  );
+  console.log("resp", resp);
+  var smsmessage = `You are registered.`;
+  // var resp1 = await send_sms(mobilenumber, smsmessage, 0);
+  // console.log("resp", resp);
+  libFunc.sendResponse(res, resp);
 }
 
 // async function checkMobExistForSpecificUser(mobilenumber) {
@@ -1286,6 +1325,7 @@ async function getUserDetails(req, res) {
   WHEN (us.role='0') THEN 'User'
   WHEN (us.role='1') THEN 'Admin'
   WHEN (us.role='2') THEN 'Dept-Admin'
+  WHEN (us.role='3') THEN 'Top-Management'
  END AS role,us.image_url as photo_path,
  us.cr_on as created_at,
     us.duties as top_duties, us.deptid as department_id,de.department_name as dep_name,
@@ -2535,7 +2575,7 @@ async function updateTaskStatusBulk(req, res) {
       msg,
       skipped: skippedCount > 0 ? skippedTasks : undefined,
     };
-    console.log("response ---->", resp);
+    // console.log("response ---->",resp)
     //  Send response
     libFunc.sendResponse(res, resp);
   } catch (err) {
@@ -4025,7 +4065,7 @@ runCron.runCron(checkRecurringTasks);
 runCron.runAt11(checkOverdueTasks);
 runCron.runAt11(checkDueDateForToday);
 
-// checkDueDateForToday();
+// checkOverdueTasks();
 
 // ------------------------
 
@@ -4186,6 +4226,7 @@ const { off, title } = require("process");
 const { get } = require("http");
 const { create } = require("domain");
 const { version } = require("os");
+const { head } = require("request");
 
 function downloadAndShowbyfilename(req, res) {
   const fpath = "./public/uploads/";
@@ -4262,16 +4303,457 @@ function downloadAndShowbyfilename(req, res) {
 //     });
 // }
 
+// v2
+// function getTotalCountofTaskCreatedByMe(req, res) {
+//     const userid = req.data.userId;
+//     const orgid = req.data.orgId;
+//     const completion_startDate = req.data.completion_startDate;
+//     const completion_endDate = req.data.completion_endDate;
+//     const userDeptId = req.data.depId;
+//     const role = req.data.user_role;
+//     const filters = req.data.filters || {}; // HERE incoming/outgoing filter
+
+//     console.log("filete--",filters,userDeptId)
+
+//     let params = [orgid];
+//     let whereClauses = ["ta.organizationid = $1"];
+
+//     // Apply date range filters
+//     if (completion_startDate) {
+//         params.push(completion_startDate);
+//         whereClauses.push(`ta.completion_date >= $${params.length}`);
+//     }
+//     if (completion_endDate) {
+//         params.push(completion_endDate);
+//         whereClauses.push(`ta.completion_date <= $${params.length}`);
+//     }
+
+//      if (role === 2 && userDeptId) {
+//         params.push(userDeptId);
+
+//         whereClauses.push(`
+//             (
+//                 created_by.deptid = $${params.length}
+//                 OR EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users u ON u.row_id = assigned_to_id::text
+//                     WHERE u.deptid = $${params.length}
+//                 )
+//             )
+//         `);
+//     }
+
+//      if (filters.outgoing === true && userDeptId) {
+//         console.log("outgoing task --- true")
+//         // Outgoing -> my dept → other dept
+//         params.push(userDeptId);
+
+//         whereClauses.push(`
+//             created_by.deptid = $${params.length}
+//             AND EXISTS (
+//                 SELECT 1
+//                 FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                 JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                 WHERE au.deptid != $${params.length}
+//             )
+//         `);
+//     }
+
+// //     if (filters.outgoing === false && userDeptId) {
+// //     console.log("incoming tasks");
+
+// //     params.push(userDeptId);
+// //     const deptParam = params.length;
+
+// //     whereClauses.push(`
+// //         created_by.deptid <> $${deptParam}
+// //         AND EXISTS (
+// //             SELECT 1
+// //             FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+// //             JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+// //             WHERE au.deptid = $${deptParam}
+// //         )
+// //     `);
+// // }
+
+// if (filters.outgoing === false && userDeptId) {
+//     console.log("incoming + my department internal tasks");
+
+//     params.push(userDeptId);
+//     const deptParam = params.length;
+
+//     whereClauses.push(`
+//         (
+//             (
+//                 created_by.deptid <> $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//             OR
+//             (
+//                 created_by.deptid = $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//         )
+//     `);
+// }
+
+//     const sqlquery = `
+//         SELECT
+//             SUM(CASE WHEN ta.active_status = 0 THEN 1 ELSE 0 END) AS ongoing_count,
+//             SUM(CASE WHEN ta.active_status = 1 THEN 1 ELSE 0 END) AS completed_count,
+//             SUM(CASE WHEN ta.active_status = 2 THEN 1 ELSE 0 END) AS overdue_count,
+//             COUNT(*) AS total_count,
+//             SUM(CASE WHEN ta.task_type = '1' THEN 1 ELSE 0 END) AS recurring_count
+//         FROM ${schema}.tasks ta
+//         INNER JOIN ${schema}.users created_by ON ta.assigned_by = created_by.row_id
+//         WHERE ${whereClauses.join(" AND ")}
+//           AND created_by.activestatus = 0
+//           AND EXISTS (
+//               SELECT 1
+//               FROM jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id
+//               JOIN ${schema}.users u ON u.row_id = assigned_to_id::text
+//               WHERE u.activestatus = 0
+//           )
+//     `;
+
+//     connect_db.query(sqlquery, params, (err, result) => {
+//         if (err) {
+//             console.error("Error fetching task count:", err);
+//             return libFunc.sendResponse(res, { status: 0, msg: "Error fetching task count" });
+//         }
+
+//         console.log("result.rows[0]",result.rows[0])
+//         return libFunc.sendResponse(res, {
+//             status: 1,
+//             msg: "Task count fetched successfully",
+//             data: result.rows[0]
+//         });
+//     });
+// }
+
+// function getTotalCountofTaskCreatedByMe(req, res) {
+//     const userid = req.data.userId;
+//     const orgid = req.data.orgId;
+//     const completion_startDate = req.data.completion_startDate;
+//     const completion_endDate = req.data.completion_endDate;
+//     const userDeptId = req.data.depId;
+//     const role = req.data.user_role;
+//     const filters = req.data.filters || {}; // HERE incoming/outgoing filter
+
+//     console.log("filete--",filters,userDeptId)
+
+//     let params = [orgid];
+//     let whereClauses = ["ta.organizationid = $1"];
+
+//     // Apply date range filters
+//     if (completion_startDate) {
+//         params.push(completion_startDate);
+//         whereClauses.push(`ta.completion_date >= $${params.length}`);
+//     }
+//     if (completion_endDate) {
+//         params.push(completion_endDate);
+//         whereClauses.push(`ta.completion_date <= $${params.length}`);
+//     }
+
+//      if (role === 2 && userDeptId) {
+//         params.push(userDeptId);
+
+//         whereClauses.push(`
+//             (
+//                 created_by.deptid = $${params.length}
+//                 OR EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users u ON u.row_id = assigned_to_id::text
+//                     WHERE u.deptid = $${params.length}
+//                 )
+//             )
+//         `);
+//     }
+
+//     if (filters.outgoing === true && userDeptId) {
+//     console.log("outgoing filter: show outgoing + incoming + internal");
+
+//     params.push(userDeptId);
+//     const deptParam = params.length;
+
+//     whereClauses.push(`
+//         (
+//             -- Outgoing A → B
+//             (
+//                 created_by.deptid = $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid <> $${deptParam}
+//                 )
+//             )
+//             OR
+//             -- Incoming B → A
+//             (
+//                 created_by.deptid <> $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//             OR
+//             -- Internal A → A
+//             (
+//                 created_by.deptid = $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//         )
+//     `);
+// }
+
+// if (filters.outgoing === false && userDeptId) {
+//     console.log("incoming + my department internal tasks");
+
+//     params.push(userDeptId);
+//     const deptParam = params.length;
+
+//     whereClauses.push(`
+//         (
+//             (
+//                 created_by.deptid <> $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//             OR
+//             (
+//                 created_by.deptid = $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//         )
+//     `);
+// }
+
+//     const sqlquery = `
+//         SELECT
+//             SUM(CASE WHEN ta.active_status = 0 THEN 1 ELSE 0 END) AS ongoing_count,
+//             SUM(CASE WHEN ta.active_status = 1 THEN 1 ELSE 0 END) AS completed_count,
+//             SUM(CASE WHEN ta.active_status = 2 THEN 1 ELSE 0 END) AS overdue_count,
+//             COUNT(*) AS total_count,
+//             SUM(CASE WHEN ta.task_type = '1' THEN 1 ELSE 0 END) AS recurring_count
+//         FROM ${schema}.tasks ta
+//         INNER JOIN ${schema}.users created_by ON ta.assigned_by = created_by.row_id
+//         WHERE ${whereClauses.join(" AND ")}
+//           AND created_by.activestatus = 0
+//           AND EXISTS (
+//               SELECT 1
+//               FROM jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id
+//               JOIN ${schema}.users u ON u.row_id = assigned_to_id::text
+//               WHERE u.activestatus = 0
+//           )
+//     `;
+
+//     connect_db.query(sqlquery, params, (err, result) => {
+//         if (err) {
+//             console.error("Error fetching task count:", err);
+//             return libFunc.sendResponse(res, { status: 0, msg: "Error fetching task count" });
+//         }
+
+//         console.log("result.rows[0]",result.rows[0])
+//         return libFunc.sendResponse(res, {
+//             status: 1,
+//             msg: "Task count fetched successfully",
+//             data: result.rows[0]
+//         });
+//     });
+// }
+
+// function getTotalCountofTaskCreatedByMe(req, res) {
+//     const userid = req.data.userId;
+//     const orgid = req.data.orgId;
+//     const completion_startDate = req.data.completion_startDate;
+//     const completion_endDate = req.data.completion_endDate;
+//     const userDeptId = req.data.depId;
+//     const role = req.data.user_role;
+//     const filters = req.data.filters || {}; // HERE incoming/outgoing filter
+
+//     console.log("filete--",filters,userDeptId)
+
+//     let params = [orgid];
+//     let whereClauses = ["ta.organizationid = $1"];
+
+//     // Apply date range filters
+//     if (completion_startDate) {
+//         params.push(completion_startDate);
+//         whereClauses.push(`ta.completion_date >= $${params.length}`);
+//     }
+//     if (completion_endDate) {
+//         params.push(completion_endDate);
+//         whereClauses.push(`ta.completion_date <= $${params.length}`);
+//     }
+
+//      if (role === 2 && userDeptId) {
+//         params.push(userDeptId);
+
+//         whereClauses.push(`
+//             (
+//                 created_by.deptid = $${params.length}
+//                 OR EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users u ON u.row_id = assigned_to_id::text
+//                     WHERE u.deptid = $${params.length}
+//                 )
+//             )
+//         `);
+//     }
+
+//     if (filters.outgoing === true && userDeptId) {
+//     console.log("outgoing filter: show outgoing + incoming + internal");
+
+//     params.push(userDeptId);
+//     const deptParam = params.length;
+
+//     whereClauses.push(`
+//         (
+//             -- Outgoing A → B
+//             (
+//                 created_by.deptid = $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid <> $${deptParam}
+//                 )
+//             )
+//             OR
+//             -- Incoming B → A
+//             (
+//                 created_by.deptid <> $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//             OR
+//             -- Internal A → A
+//             (
+//                 created_by.deptid = $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//         )
+//     `);
+// }
+
+// if (filters.outgoing === false && userDeptId) {
+//     console.log("incoming + my department internal tasks");
+
+//     params.push(userDeptId);
+//     const deptParam = params.length;
+
+//     whereClauses.push(`
+//         (
+//             (
+//                 created_by.deptid <> $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//             OR
+//             (
+//                 created_by.deptid = $${deptParam}
+//                 AND EXISTS (
+//                     SELECT 1
+//                     FROM jsonb_array_elements_text(ta.assigned_to) assigned_to_id
+//                     JOIN ${schema}.users au ON au.row_id = assigned_to_id::text
+//                     WHERE au.deptid = $${deptParam}
+//                 )
+//             )
+//         )
+//     `);
+// }
+
+//     const sqlquery = `
+//         SELECT
+//             SUM(CASE WHEN ta.active_status = 0 THEN 1 ELSE 0 END) AS ongoing_count,
+//             SUM(CASE WHEN ta.active_status = 1 THEN 1 ELSE 0 END) AS completed_count,
+//             SUM(CASE WHEN ta.active_status = 2 THEN 1 ELSE 0 END) AS overdue_count,
+//             COUNT(*) AS total_count,
+//             SUM(CASE WHEN ta.task_type = '1' THEN 1 ELSE 0 END) AS recurring_count
+//         FROM ${schema}.tasks ta
+//         INNER JOIN ${schema}.users created_by ON ta.assigned_by = created_by.row_id
+//         WHERE ${whereClauses.join(" AND ")}
+//           AND created_by.activestatus = 0
+//           AND EXISTS (
+//               SELECT 1
+//               FROM jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id
+//               JOIN ${schema}.users u ON u.row_id = assigned_to_id::text
+//               WHERE u.activestatus = 0
+//           )
+//     `;
+
+//     connect_db.query(sqlquery, params, (err, result) => {
+//         if (err) {
+//             console.error("Error fetching task count:", err);
+//             return libFunc.sendResponse(res, { status: 0, msg: "Error fetching task count" });
+//         }
+
+//         console.log("result.rows[0]",result.rows[0])
+//         return libFunc.sendResponse(res, {
+//             status: 1,
+//             msg: "Task count fetched successfully",
+//             data: result.rows[0]
+//         });
+//     });
+// }
+
 function getTotalCountofTaskCreatedByMe(req, res) {
-  const userid = req.data.userId;
   const orgid = req.data.orgId;
   const completion_startDate = req.data.completion_startDate;
   const completion_endDate = req.data.completion_endDate;
+  const userDeptId = req.data.depId;
+  const role = req.data.user_role;
+  const filters = req.data.filters || {};
 
   let params = [orgid];
   let whereClauses = ["ta.organizationid = $1"];
 
-  // Apply date range filters
+  // ---------------------------------------------
+  // DATE RANGE
+  // ---------------------------------------------
   if (completion_startDate) {
     params.push(completion_startDate);
     whereClauses.push(`ta.completion_date >= $${params.length}`);
@@ -4281,6 +4763,134 @@ function getTotalCountofTaskCreatedByMe(req, res) {
     whereClauses.push(`ta.completion_date <= $${params.length}`);
   }
 
+  // ---------------------------------------------
+  // DEPT PARAM (Push Once)
+  // ---------------------------------------------
+  let deptIdx = null;
+  if (userDeptId) {
+    params.push(userDeptId);
+    deptIdx = params.length;
+  }
+
+  // ---------------------------------------------
+  // ROLE = 2 (Department Admin)
+  // ---------------------------------------------
+  if (role === 2 && deptIdx) {
+    whereClauses.push(`
+            (
+                created_by.deptid = $${deptIdx}
+                OR EXISTS (
+                    SELECT 1 
+                    FROM jsonb_array_elements_text(ta.assigned_to) t(aid)
+                    JOIN ${schema}.users u ON u.row_id = t.aid::text
+                    WHERE u.deptid = $${deptIdx}
+                )
+            )
+        `);
+  }
+
+  // ============================================================
+  // ⭐ OUTGOING / INCOMING / INTERNAL LOGIC (ADMIN SAFE)
+  // ============================================================
+
+  if (deptIdx) {
+    if (filters.outgoing === true) {
+      whereClauses.push(`
+                (
+                    -- Admin assigning to anyone
+                    created_by.deptid IS NULL
+
+                    OR
+
+                    -- Task assigned to Admin
+                    EXISTS (
+                        SELECT 1
+                        FROM jsonb_array_elements_text(ta.assigned_to) t(aid)
+                        JOIN ${schema}.users au ON au.row_id = t.aid::text
+                        WHERE au.deptid IS NULL
+                    )
+
+                    OR
+
+                    -- Outgoing A → B
+                    (
+                        created_by.deptid = $${deptIdx}
+                        AND EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements_text(ta.assigned_to) t(aid)
+                            JOIN ${schema}.users au ON au.row_id = t.aid::text
+                            WHERE au.deptid <> $${deptIdx} AND au.deptid IS NOT NULL
+                        )
+                    )
+
+                    OR
+
+                    -- Incoming B → A
+                    (
+                        created_by.deptid <> $${deptIdx} AND created_by.deptid IS NOT NULL
+                        AND EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements_text(ta.assigned_to) t(aid)
+                            JOIN ${schema}.users au ON au.row_id = t.aid::text
+                            WHERE au.deptid = $${deptIdx}
+                        )
+                    )
+
+                    OR
+
+                    -- Internal A → A
+                    (
+                        created_by.deptid = $${deptIdx}
+                        AND EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements_text(ta.assigned_to) t(aid)
+                            JOIN ${schema}.users au ON au.row_id = t.aid::text
+                            WHERE au.deptid = $${deptIdx}
+                        )
+                    )
+                )
+            `);
+    }
+
+    if (filters.outgoing === false && deptIdx) {
+      whereClauses.push(`
+            (
+                -- Admin assigned tasks
+                created_by.deptid IS NULL
+    
+                OR
+    
+                -- Incoming B → A
+                (
+                    created_by.deptid <> $${deptIdx} AND created_by.deptid IS NOT NULL
+                    AND EXISTS (
+                        SELECT 1
+                        FROM jsonb_array_elements_text(ta.assigned_to) t(aid)
+                        JOIN ${schema}.users au ON au.row_id = t.aid::text
+                        WHERE au.deptid = $${deptIdx}
+                    )
+                )
+    
+                OR
+    
+                -- Internal A → A
+                (
+                    created_by.deptid = $${deptIdx}
+                    AND EXISTS (
+                        SELECT 1
+                        FROM jsonb_array_elements_text(ta.assigned_to) t(aid)
+                        JOIN ${schema}.users au ON au.row_id = t.aid::text
+                        WHERE au.deptid = $${deptIdx}
+                    )
+                )
+            )
+        `);
+    }
+  }
+
+  // -------------------------------------------------------------
+  // FINAL COUNT QUERY
+  // -------------------------------------------------------------
   const sqlquery = `
         SELECT 
             SUM(CASE WHEN ta.active_status = 0 THEN 1 ELSE 0 END) AS ongoing_count,
@@ -4294,8 +4904,8 @@ function getTotalCountofTaskCreatedByMe(req, res) {
           AND created_by.activestatus = 0  
           AND EXISTS (
               SELECT 1
-              FROM jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id
-              JOIN ${schema}.users u ON u.row_id = assigned_to_id::text
+              FROM jsonb_array_elements_text(ta.assigned_to) t(aid)
+              JOIN ${schema}.users u ON u.row_id = t.aid::text
               WHERE u.activestatus = 0
           )
     `;
@@ -4309,7 +4919,7 @@ function getTotalCountofTaskCreatedByMe(req, res) {
       });
     }
 
-    // console.log("result.rows[0]",result.rows[0])
+    console.log("count", result.rows[0]);
     return libFunc.sendResponse(res, {
       status: 1,
       msg: "Task count fetched successfully",
@@ -5913,172 +6523,1511 @@ var importedUsers = [
 //     }
 // }
 
-async function fetchTasks(req, res) {
-  try {
-    const userid = req.data.userId;
-    const organizationid = req.data.orgId;
-    const role = req.data.user_role; // 0 = normal, 1 = admin
-    const statusFilter = req.data.status; // ongoing, complete, overdue
-    const filters = req.data.filters || {}; // optional filters object
+// async function fetchTasks(req, res) {
+//     // console.log("req",req)
+//     try {
+//         //  Read data from request
+//         const userid = req.data.userId;
+//         const organizationid = req.data.orgId;
+//         const role = req.data.user_role; // 0 = normal, 1 = admin
+//         const statusFilter = req.data.status; // ongoing, complete, overdue
+//         const filters = req.data.filters || {}; // optional filters object
+//         const userDeptId = req.data.depId;
 
-    const completion_startDate = req.data.completion_startDate;
-    const completion_endDate = req.data.completion_endDate;
-    const task_completed_on_startDate = req.data.task_completed_on_startDate;
-    const task_completed_on_endDate = req.data.task_completed_on_endDate;
+//         const completion_startDate = req.data.completion_startDate;
+//         const completion_endDate = req.data.completion_endDate;
+//         const task_completed_on_startDate = req.data.task_completed_on_startDate;
+//         const task_completed_on_endDate = req.data.task_completed_on_endDate;
 
-    const limit = req.data.limit || 100;
-    const page = req.data.page || 1;
-    const offset = (page - 1) * limit;
+//         //  Pagination
+//         const limit = req.data.limit || 100;
+//         const page = req.data.page || 1;
+//         const offset = (page - 1) * limit;
 
-    let params = [organizationid];
-    let whereClauses = ["ta.organizationid = $1"];
+//         // Base query
+//         let params = [organizationid];
+//         let whereClauses = ["ta.organizationid = $1"];
 
-    // Default active_status only if no status filter sent
-    if (!statusFilter) {
-      whereClauses.push("ta.active_status = 0");
-    }
+//         // show only ongoing tasks IF user did not send status filtert ,  If no status selected → Show ongoing tasks.
+//         if (!statusFilter) {
+//             whereClauses.push("ta.active_status = 0");
+//         }
 
-    // Status Filter
-    let active_status;
-    if (statusFilter) {
-      const active_status_map = { ongoing: 0, complete: 1, overdue: 2 };
-      active_status = active_status_map[statusFilter.toLowerCase()];
-      if (active_status !== undefined) {
-        params.push(active_status);
-        whereClauses.push(`ta.active_status = $${params.length}`);
-      }
-    }
+//         //  Status filter (ongoing / complete / overdue)
+//         let active_status;
+//         if (statusFilter) {
+//             const active_status_map = { ongoing: 0, complete: 1, overdue: 2 };
+//             active_status = active_status_map[statusFilter.toLowerCase()];
+//             if (active_status !== undefined) {
+//                 params.push(active_status);
+//                 whereClauses.push(`ta.active_status = $${params.length}`);
+//             }
+//         }
 
-    // Completion Date Filters (Outside)
-    if (completion_startDate) {
-      params.push(completion_startDate);
-      whereClauses.push(`ta.completion_date >= $${params.length}`);
-    }
-    if (completion_endDate) {
-      params.push(completion_endDate);
-      whereClauses.push(`ta.completion_date <= $${params.length}`);
-    }
+//         // Completion Date Filters (Outside)
+//         if (completion_startDate) {
+//             params.push(completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (completion_endDate) {
+//             params.push(completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
 
-    // Completion Date Filters (Inside filters object)
-    if (filters.completion_startDate) {
-      params.push(filters.completion_startDate);
-      whereClauses.push(`ta.completion_date >= $${params.length}`);
-    }
-    if (filters.completion_endDate) {
-      params.push(filters.completion_endDate);
-      whereClauses.push(`ta.completion_date <= $${params.length}`);
-    }
+//         // Completion Date Filters (Inside filters object)
+//         if (filters.completion_startDate) {
+//             params.push(filters.completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (filters.completion_endDate) {
+//             params.push(filters.completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
 
-    // CompletedOn Date Filters — apply only for completed tasks
-    if (active_status === 1 || statusFilter?.toLowerCase() === "complete") {
-      if (filters.task_completed_on_startDate) {
-        params.push(filters.task_completed_on_startDate);
-        whereClauses.push(`ta.completedon >= $${params.length}`);
-      }
-      if (filters.task_completed_on_endDate) {
-        params.push(filters.task_completed_on_endDate);
-        whereClauses.push(`ta.completedon <= $${params.length}`);
-      }
-    }
+//         // CompletedOn Date Filters — apply only for completed tasks
+//         if (active_status === 1 || statusFilter?.toLowerCase() === "complete") {
+//             if (filters.task_completed_on_startDate) {
+//                 params.push(filters.task_completed_on_startDate);
+//                 whereClauses.push(`ta.completedon >= $${params.length}`);
+//             }
+//             if (filters.task_completed_on_endDate) {
+//                 params.push(filters.task_completed_on_endDate);
+//                 whereClauses.push(`ta.completedon <= $${params.length}`);
+//             }
+//         }
 
-    // Department Filter
-    if (filters.department_id?.length) {
-      params.push(filters.department_id);
-      whereClauses.push(`us1.deptid = ANY($${params.length})`);
-    }
+//         // Department Filter
+//         if (filters.department_id?.length) {
+//             params.push(filters.department_id);
+//             whereClauses.push(`us1.deptid = ANY($${params.length})`);
+//         }
 
-    // Assigned To Filter
-    if (filters.assigned_to?.length) {
-      params.push(filters.assigned_to);
-      whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
-    }
+//         // Assigned To Filter
+//         if (filters.assigned_to?.length) {
+//             params.push(filters.assigned_to);
+//             whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
+//         }
 
-    // Assigned By Filter
-    if (filters.assigned_by?.length) {
-      params.push(filters.assigned_by);
-      whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
-    }
+//         // Assigned By Filter
+//         if (filters.assigned_by?.length) {
+//             params.push(filters.assigned_by);
+//             whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
+//         }
 
-    // Task Type (Normal / Recurring)
-    if (filters.type) {
-      params.push(filters.type.toLowerCase() === "normal" ? "0" : "1");
-      whereClauses.push(`ta.task_type = $${params.length}`);
-    }
+//         // Task Type (Normal / Recurring)
+//         if (filters.type) {
+//             params.push(filters.type.toLowerCase() === "normal" ? '0' : '1');
+//             whereClauses.push(`ta.task_type = $${params.length}`);
+//         }
 
-    // Frequency Filter
-    if (filters.frequency) {
-      params.push(filters.frequency);
-      whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
-    }
+//         // Frequency Filter
+//         if (filters.frequency) {
+//             params.push(filters.frequency);
+//             whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+//         }
 
-    // Pagination
-    params.push(limit);
-    params.push(offset);
+//         //  Department Admin Access Control
+//         if (role === 2) {
+//             params.push(userDeptId);
+//             whereClauses.push(`
+//                 (
+//                     us1.deptid = $${params.length}
+//                     OR assigned_to_id IN (
+//                         SELECT row_id FROM ${schema}.users WHERE deptid = $${params.length}
+//                     )
+//                 )
+//             `);
+//         }
 
-    //  Final Query with active user condition
-    const query = `
-            SELECT
-                ta.row_id,
-                ta.title,
-                ta.description,
-                ta.checklist,
-                ta.completion_date,
-                ta.completedon,
-                us1.name AS created_by,
-                COALESCE(dept.department_name, 'Owner') AS created_by_department,
-                ta.cr_on AS created_at,
-                json_agg(us.name) AS assigned_to,
-                CASE
-                    WHEN ta.active_status = 0 THEN 'ongoing'
-                    WHEN ta.active_status = 1 THEN 'complete'
-                    WHEN ta.active_status = 2 THEN 'overdue'
-                END AS status,
-                CASE
-                    WHEN ta.task_type = '0' THEN 'Normal'
-                    WHEN ta.task_type = '1' THEN 'Recurring'
-                END AS task_type_title,
-                CASE
-                    WHEN ta.active_status = 1 AND ta.completion_date < CURRENT_DATE 
-                        THEN ABS(ta.up_on::date - ta.completion_date) 
-                    WHEN ta.completion_date >= CURRENT_DATE 
-                        THEN (ta.completion_date - CURRENT_DATE)
-                    ELSE ABS(ta.completion_date - CURRENT_DATE)
-                END AS due_days,
-                CASE
-                    WHEN ta.completion_date >= CURRENT_DATE 
-                        THEN 'due_in'
-                    ELSE 'overdue_by'
-                END AS due_label,
-                us2.name AS updated_by,
-                ta.task_type,
-                rt.row_id as recurring_task_id,
-                rt.schedule_details->>'type' AS schedule_type,
-                rt.schedule_details->>'reminder_list' AS reminder_list
-            FROM ${schema}.tasks ta
-            INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
-            LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
-            INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
-            INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
-            LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
-            LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
-            WHERE ${whereClauses.join(" AND ")} 
-              AND us.activestatus = 0
-            GROUP BY ta.row_id, ta.checklist, us1.name, dept.department_name, us2.name, rt.schedule_details, rt.row_id
-            ORDER BY ta.cr_on DESC
-            LIMIT $${params.length - 1} OFFSET $${params.length};
-        `;
+//         if (filters.outgoing === true) {
+//        whereClauses.push(`
+//         us1.deptid IS NOT NULL
+//         AND us.deptid IS NOT NULL
+//         AND us1.deptid <> us.deptid
+//        `);
+//     }
 
-    if (role === 1) {
-      const resp = await db_query.customQuery(query, "Tasks Fetched", params);
-      libFunc.sendResponse(res, resp);
-    } else {
-      libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
-    }
-  } catch (err) {
-    console.error("Error in fetchTasks:", err);
-    libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
-  }
-}
+//         // Pagination
+//         params.push(limit);
+//         params.push(offset);
+
+//         //  Final Query with active user condition
+//         const query = `
+//             SELECT
+//                 ta.row_id,
+//                 ta.title,
+//                 ta.description,
+//                 ta.checklist,
+//                 ta.completion_date,
+//                 ta.completedon,
+//                 us1.name AS created_by,
+//                 CASE
+//                    WHEN dept.department_name IS NULL THEN
+//                        CASE us1.role
+//                           WHEN 3 THEN 'Top Management'
+//                           WHEN 1 THEN 'Admin'
+//                           ELSE 'Unknown'
+//                         END
+//                     ELSE dept.department_name
+//                   END AS created_by_department,
+//                 ta.cr_on AS created_at,
+//                 json_agg(us.name) AS assigned_to,
+//                 json_agg(
+//     json_build_object(
+//         'user_id', us.row_id,
+//         'name', us.name,
+//         'department',
+//             CASE
+//                 WHEN dept2.department_name IS NULL THEN
+//                     CASE us.role
+//                         WHEN 3 THEN 'Top Management'
+//                         WHEN 1 THEN 'Admin'
+//                         ELSE 'Owner'
+//                     END
+//                 ELSE dept2.department_name
+//             END
+//     )
+// ) AS assigned_to_details,
+//                 CASE
+//                     WHEN ta.active_status = 0 THEN 'ongoing'
+//                     WHEN ta.active_status = 1 THEN 'complete'
+//                     WHEN ta.active_status = 2 THEN 'overdue'
+//                 END AS status,
+//                 CASE
+//                     WHEN ta.task_type = '0' THEN 'Normal'
+//                     WHEN ta.task_type = '1' THEN 'Recurring'
+//                 END AS task_type_title,
+//                 CASE
+//                     WHEN ta.active_status = 1 AND ta.completion_date < CURRENT_DATE
+//                         THEN ABS(ta.up_on::date - ta.completion_date)
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN (ta.completion_date - CURRENT_DATE)
+//                     ELSE ABS(ta.completion_date - CURRENT_DATE)
+//                 END AS due_days,
+//                 CASE
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN 'due_in'
+//                     ELSE 'overdue_by'
+//                 END AS due_label,
+//                 us2.name AS updated_by,
+//                 ta.task_type,
+//                 rt.row_id as recurring_task_id,
+//                 rt.schedule_details->>'type' AS schedule_type,
+//                 rt.schedule_details->>'reminder_list' AS reminder_list
+//             FROM ${schema}.tasks ta
+//             INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
+//             LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
+//             INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
+//             INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
+//             LEFT JOIN ${schema}.departments dept2 ON us.deptid = dept2.row_id
+//             LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
+//             LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
+//             WHERE ${whereClauses.join(" AND ")}
+//               AND us.activestatus = 0
+//             GROUP BY ta.row_id, ta.checklist, us1.name, dept.department_name, us2.name, rt.schedule_details, rt.row_id,us1.role
+//             ORDER BY ta.cr_on DESC
+//             LIMIT $${params.length - 1} OFFSET $${params.length};
+//         `;
+//         // console.log("role",role)
+
+//         if (role === 1 || role === 3 || role ===2) {
+//             const resp = await db_query.customQuery(query, "Tasks Fetched", params);
+//             // console.log("response---->",resp.data)
+//             libFunc.sendResponse(res, resp);
+//         } else {
+//             libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
+//         }
+
+//     } catch (err) {
+//         console.error("Error in fetchTasks:", err);
+//         libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
+//     }
+// }
+
+// v2
+// async function fetchTasks(req, res) {
+//     // console.log("req",req)
+//     try {
+//         //  Read data from request
+//         const userid = req.data.userId;
+//         const organizationid = req.data.orgId;
+//         const role = req.data.user_role; // 0 = normal, 1 = admin
+//         const statusFilter = req.data.status; // ongoing, complete, overdue
+//         const filters = req.data.filters || {}; // optional filters object
+//         const userDeptId = req.data.depId;
+
+//         const completion_startDate = req.data.completion_startDate;
+//         const completion_endDate = req.data.completion_endDate;
+//         const task_completed_on_startDate = req.data.task_completed_on_startDate;
+//         const task_completed_on_endDate = req.data.task_completed_on_endDate;
+
+//         //  Pagination
+//         const limit = req.data.limit || 100;
+//         const page = req.data.page || 1;
+//         const offset = (page - 1) * limit;
+
+//         // Base query
+//         let params = [organizationid];
+//         let whereClauses = ["ta.organizationid = $1"];
+
+//         // show only ongoing tasks IF user did not send status filtert ,  If no status selected → Show ongoing tasks.
+//         if (!statusFilter) {
+//             whereClauses.push("ta.active_status = 0");
+//         }
+
+//         //  Status filter (ongoing / complete / overdue)
+//         let active_status;
+//         if (statusFilter) {
+//             const active_status_map = { ongoing: 0, complete: 1, overdue: 2 };
+//             active_status = active_status_map[statusFilter.toLowerCase()];
+//             if (active_status !== undefined) {
+//                 params.push(active_status);
+//                 whereClauses.push(`ta.active_status = $${params.length}`);
+//             }
+//         }
+
+//         // Completion Date Filters (Outside)
+//         if (completion_startDate) {
+//             params.push(completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (completion_endDate) {
+//             params.push(completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // Completion Date Filters (Inside filters object)
+//         if (filters.completion_startDate) {
+//             params.push(filters.completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (filters.completion_endDate) {
+//             params.push(filters.completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // CompletedOn Date Filters — apply only for completed tasks
+//         if (active_status === 1 || statusFilter?.toLowerCase() === "complete") {
+//             if (filters.task_completed_on_startDate) {
+//                 params.push(filters.task_completed_on_startDate);
+//                 whereClauses.push(`ta.completedon >= $${params.length}`);
+//             }
+//             if (filters.task_completed_on_endDate) {
+//                 params.push(filters.task_completed_on_endDate);
+//                 whereClauses.push(`ta.completedon <= $${params.length}`);
+//             }
+//         }
+
+//         // Department Filter
+//         if (filters.department_id?.length) {
+//             params.push(filters.department_id);
+//             whereClauses.push(`us1.deptid = ANY($${params.length})`);
+//         }
+
+//         // Assigned To Filter
+//         if (filters.assigned_to?.length) {
+//             params.push(filters.assigned_to);
+//             whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
+//         }
+
+//         // Assigned By Filter
+//         if (filters.assigned_by?.length) {
+//             params.push(filters.assigned_by);
+//             whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
+//         }
+
+//         // Task Type (Normal / Recurring)
+//         if (filters.type) {
+//             params.push(filters.type.toLowerCase() === "normal" ? '0' : '1');
+//             whereClauses.push(`ta.task_type = $${params.length}`);
+//         }
+
+//         // Frequency Filter
+//         if (filters.frequency) {
+//             params.push(filters.frequency);
+//             whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+//         }
+
+//         //  Department Admin Access Control
+//         if (role === 2) {
+//             params.push(userDeptId);
+//             whereClauses.push(`
+//                 (
+//                     us1.deptid = $${params.length}
+//                     OR assigned_to_id IN (
+//                         SELECT row_id FROM ${schema}.users WHERE deptid = $${params.length}
+//                     )
+//                 )
+//             `);
+//         }
+
+//     //     if (filters.outgoing === true) {
+//     //    whereClauses.push(`
+//     //     us1.deptid IS NOT NULL
+//     //     AND us.deptid IS NOT NULL
+//     //     AND us1.deptid <> us.deptid
+//     //    `);
+//     // }
+
+//     if (filters.outgoing === true) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         us1.deptid = $${params.length}
+//         AND us.deptid <> $${params.length}
+//     `);
+// }
+
+// if (filters.outgoing === false) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         NOT (
+//             us1.deptid = $${params.length}
+//             AND us.deptid <> $${params.length}
+//         )
+//     `);
+// }
+
+//         // Pagination
+//         params.push(limit);
+//         params.push(offset);
+
+//         //  Final Query with active user condition
+//         const query = `
+//             SELECT
+//                 ta.row_id,
+//                 ta.title,
+//                 ta.description,
+//                 ta.checklist,
+//                 ta.completion_date,
+//                 ta.completedon,
+//                 us1.name AS created_by,
+//                 CASE
+//                    WHEN dept.department_name IS NULL THEN
+//                        CASE us1.role
+//                           WHEN 3 THEN 'Top Management'
+//                           WHEN 1 THEN 'Admin'
+//                           ELSE 'Unknown'
+//                         END
+//                     ELSE dept.department_name
+//                   END AS created_by_department,
+//                 ta.cr_on AS created_at,
+//                 json_agg(us.name) AS assigned_to,
+//                 json_agg(
+//     json_build_object(
+//         'user_id', us.row_id,
+//         'name', us.name,
+//         'department',
+//             CASE
+//                 WHEN dept2.department_name IS NULL THEN
+//                     CASE us.role
+//                         WHEN 3 THEN 'Top Management'
+//                         WHEN 1 THEN 'Admin'
+//                         ELSE 'Owner'
+//                     END
+//                 ELSE dept2.department_name
+//             END
+//     )
+// ) AS assigned_to_details,
+//                 CASE
+//                     WHEN ta.active_status = 0 THEN 'ongoing'
+//                     WHEN ta.active_status = 1 THEN 'complete'
+//                     WHEN ta.active_status = 2 THEN 'overdue'
+//                 END AS status,
+//                 CASE
+//                     WHEN ta.task_type = '0' THEN 'Normal'
+//                     WHEN ta.task_type = '1' THEN 'Recurring'
+//                 END AS task_type_title,
+//                 CASE
+//                     WHEN ta.active_status = 1 AND ta.completion_date < CURRENT_DATE
+//                         THEN ABS(ta.up_on::date - ta.completion_date)
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN (ta.completion_date - CURRENT_DATE)
+//                     ELSE ABS(ta.completion_date - CURRENT_DATE)
+//                 END AS due_days,
+//                 CASE
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN 'due_in'
+//                     ELSE 'overdue_by'
+//                 END AS due_label,
+//                 us2.name AS updated_by,
+//                 ta.task_type,
+//                 rt.row_id as recurring_task_id,
+//                 rt.schedule_details->>'type' AS schedule_type,
+//                 rt.schedule_details->>'reminder_list' AS reminder_list
+//             FROM ${schema}.tasks ta
+//             INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
+//             LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
+//             INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
+//             INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
+//             LEFT JOIN ${schema}.departments dept2 ON us.deptid = dept2.row_id
+//             LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
+//             LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
+//             WHERE ${whereClauses.join(" AND ")}
+//               AND us.activestatus = 0
+//             GROUP BY ta.row_id, ta.checklist, us1.name, dept.department_name, us2.name, rt.schedule_details, rt.row_id,us1.role
+//             ORDER BY ta.cr_on DESC
+//             LIMIT $${params.length - 1} OFFSET $${params.length};
+//         `;
+//         // console.log("role",role)
+
+//         if (role === 1 || role === 3 || role ===2) {
+//             const resp = await db_query.customQuery(query, "Tasks Fetched", params);
+//             // console.log("response---->",resp.data)
+//             libFunc.sendResponse(res, resp);
+//         } else {
+//             libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
+//         }
+
+//     } catch (err) {
+//         console.error("Error in fetchTasks:", err);
+//         libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
+//     }
+// }
+
+// v3
+// async function fetchTasks(req, res) {
+//     // console.log("req",req)
+//     try {
+//         //  Read data from request
+//         const userid = req.data.userId;
+//         const organizationid = req.data.orgId;
+//         const role = req.data.user_role; // 0 = normal, 1 = admin
+//         const statusFilter = req.data.status; // ongoing, complete, overdue
+//         const filters = req.data.filters || {}; // optional filters object
+//         const userDeptId = req.data.depId;
+
+//         const completion_startDate = req.data.completion_startDate;
+//         const completion_endDate = req.data.completion_endDate;
+//         const task_completed_on_startDate = req.data.task_completed_on_startDate;
+//         const task_completed_on_endDate = req.data.task_completed_on_endDate;
+
+//         //  Pagination
+//         const limit = req.data.limit || 100;
+//         const page = req.data.page || 1;
+//         const offset = (page - 1) * limit;
+
+//         // Base query
+//         let params = [organizationid];
+//         let whereClauses = ["ta.organizationid = $1"];
+
+//         // show only ongoing tasks IF user did not send status filtert ,  If no status selected → Show ongoing tasks.
+//         if (!statusFilter) {
+//             whereClauses.push("ta.active_status = 0");
+//         }
+
+//         //  Status filter (ongoing / complete / overdue)
+//         let active_status;
+//         if (statusFilter) {
+//             const active_status_map = { ongoing: 0, complete: 1, overdue: 2 };
+//             active_status = active_status_map[statusFilter.toLowerCase()];
+//             if (active_status !== undefined) {
+//                 params.push(active_status);
+//                 whereClauses.push(`ta.active_status = $${params.length}`);
+//             }
+//         }
+
+//         // Completion Date Filters (Outside)
+//         if (completion_startDate) {
+//             params.push(completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (completion_endDate) {
+//             params.push(completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // Completion Date Filters (Inside filters object)
+//         if (filters.completion_startDate) {
+//             params.push(filters.completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (filters.completion_endDate) {
+//             params.push(filters.completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // CompletedOn Date Filters — apply only for completed tasks
+//         if (active_status === 1 || statusFilter?.toLowerCase() === "complete") {
+//             if (filters.task_completed_on_startDate) {
+//                 params.push(filters.task_completed_on_startDate);
+//                 whereClauses.push(`ta.completedon >= $${params.length}`);
+//             }
+//             if (filters.task_completed_on_endDate) {
+//                 params.push(filters.task_completed_on_endDate);
+//                 whereClauses.push(`ta.completedon <= $${params.length}`);
+//             }
+//         }
+
+//         // Department Filter
+//         if (filters.department_id?.length) {
+//             params.push(filters.department_id);
+//             whereClauses.push(`us1.deptid = ANY($${params.length})`);
+//         }
+
+//         // Assigned To Filter
+//         if (filters.assigned_to?.length) {
+//             params.push(filters.assigned_to);
+//             whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
+//         }
+
+//         // Assigned By Filter
+//         if (filters.assigned_by?.length) {
+//             params.push(filters.assigned_by);
+//             whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
+//         }
+
+//         // Task Type (Normal / Recurring)
+//         if (filters.type) {
+//             params.push(filters.type.toLowerCase() === "normal" ? '0' : '1');
+//             whereClauses.push(`ta.task_type = $${params.length}`);
+//         }
+
+//         // Frequency Filter
+//         if (filters.frequency) {
+//             params.push(filters.frequency);
+//             whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+//         }
+
+//         //  Department Admin Access Control
+//         if (role === 2) {
+//             params.push(userDeptId);
+//             whereClauses.push(`
+//                 (
+//                     us1.deptid = $${params.length}
+//                     OR assigned_to_id IN (
+//                         SELECT row_id FROM ${schema}.users WHERE deptid = $${params.length}
+//                     )
+//                 )
+//             `);
+//         }
+
+//     //     if (filters.outgoing === true) {
+//     //    whereClauses.push(`
+//     //     us1.deptid IS NOT NULL
+//     //     AND us.deptid IS NOT NULL
+//     //     AND us1.deptid <> us.deptid
+//     //    `);
+//     // }
+
+//      let outgoingP1 = null;
+//         let outgoingP2 = null;
+
+//         if (filters.outgoing === true) {
+//             // outgoing highlight only — NO FILTER applied
+//             params.push(userDeptId);
+//             outgoingP1 = params.length;
+
+//             params.push(userDeptId);
+//             outgoingP2 = params.length;
+//         }
+
+//         if (filters.outgoing === false) {
+//             params.push(userDeptId);
+//             outgoingP1 = params.length;
+
+//             params.push(userDeptId);
+//             outgoingP2 = params.length;
+
+//             // Remove outgoing tasks
+//             whereClauses.push(`
+//                 NOT (
+//                     us1.deptid = $${outgoingP1}
+//                     AND us.deptid <> $${outgoingP2}
+//                 )
+//             `);
+//         }
+
+//         // Pagination params
+//         params.push(limit);
+//         const limitIndex = params.length;
+
+//         params.push(offset);
+//         const offsetIndex = params.length;
+
+//         //  Final Query with active user condition
+//         const query = `
+//             SELECT
+//                 ta.row_id,
+//                 ta.title,
+//                 ta.description,
+//                 ta.checklist,
+//                 ta.completion_date,
+//                 ta.completedon,
+//                 us1.name AS created_by,
+//                 CASE
+//                    WHEN dept.department_name IS NULL THEN
+//                        CASE us1.role
+//                           WHEN 3 THEN 'Top Management'
+//                           WHEN 1 THEN 'Admin'
+//                           ELSE 'Unknown'
+//                         END
+//                     ELSE dept.department_name
+//                   END AS created_by_department,
+//                 ta.cr_on AS created_at,
+//                 json_agg(us.name) AS assigned_to,
+//                 json_agg(
+//     json_build_object(
+//         'user_id', us.row_id,
+//         'name', us.name,
+//         'department',
+//             CASE
+//                 WHEN dept2.department_name IS NULL THEN
+//                     CASE us.role
+//                         WHEN 3 THEN 'Top Management'
+//                         WHEN 1 THEN 'Admin'
+//                         ELSE 'Owner'
+//                     END
+//                 ELSE dept2.department_name
+//             END
+//     )
+// ) AS assigned_to_details,
+//                 CASE
+//                     WHEN ta.active_status = 0 THEN 'ongoing'
+//                     WHEN ta.active_status = 1 THEN 'complete'
+//                     WHEN ta.active_status = 2 THEN 'overdue'
+//                 END AS status,
+//                 CASE
+//                     WHEN ta.task_type = '0' THEN 'Normal'
+//                     WHEN ta.task_type = '1' THEN 'Recurring'
+//                 END AS task_type_title,
+//                 CASE
+//                     WHEN ta.active_status = 1 AND ta.completion_date < CURRENT_DATE
+//                         THEN ABS(ta.up_on::date - ta.completion_date)
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN (ta.completion_date - CURRENT_DATE)
+//                     ELSE ABS(ta.completion_date - CURRENT_DATE)
+//                 END AS due_days,
+//                 CASE
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN 'due_in'
+//                     ELSE 'overdue_by'
+//                 END AS due_label,
+//                  CASE
+//                     WHEN ${outgoingP1 ? `us1.deptid = $${outgoingP1} AND us.deptid <> $${outgoingP2}` : 'false'}
+//                     THEN true
+//                     ELSE false
+//                 END AS is_outgoing_flag,
+
+//                 us2.name AS updated_by,
+//                 ta.task_type,
+//                 rt.row_id as recurring_task_id,
+//                 rt.schedule_details->>'type' AS schedule_type,
+//                 rt.schedule_details->>'reminder_list' AS reminder_list
+//             FROM ${schema}.tasks ta
+//             INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
+//             LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
+//             INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
+//             INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
+//             LEFT JOIN ${schema}.departments dept2 ON us.deptid = dept2.row_id
+//             LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
+//             LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
+//             WHERE ${whereClauses.join(" AND ")}
+//               AND us.activestatus = 0
+//             GROUP BY ta.row_id, ta.checklist, us1.name, dept.department_name, us2.name, rt.schedule_details, rt.row_id,us1.role,  us1.deptid, us.deptid
+//             ORDER BY ta.cr_on DESC
+//             LIMIT $${limitIndex} OFFSET $${offsetIndex}
+//         `;
+
+//         // console.log("role",role)
+
+//         if (role === 1 || role === 3 || role ===2) {
+//             const resp = await db_query.customQuery(query, "Tasks Fetched", params);
+//             console.log("response---->",resp.data)
+//             libFunc.sendResponse(res, resp);
+//         } else {
+//             libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
+//         }
+
+//     } catch (err) {
+//         console.error("Error in fetchTasks:", err);
+//         libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
+//     }
+// }
+
+// v4 colour worl
+// async function fetchTasks(req, res) {
+//     // console.log("req",req)
+//     try {
+//         //  Read data from request
+//         const userid = req.data.userId;
+//         const organizationid = req.data.orgId;
+//         const role = req.data.user_role; // 0 = normal, 1 = admin
+//         const statusFilter = req.data.status; // ongoing, complete, overdue
+//         const filters = req.data.filters || {}; // optional filters object
+//         const userDeptId = req.data.depId;
+
+//         const completion_startDate = req.data.completion_startDate;
+//         const completion_endDate = req.data.completion_endDate;
+//         const task_completed_on_startDate = req.data.task_completed_on_startDate;
+//         const task_completed_on_endDate = req.data.task_completed_on_endDate;
+
+//         //  Pagination
+//         const limit = req.data.limit || 100;
+//         const page = req.data.page || 1;
+//         const offset = (page - 1) * limit;
+
+//         // Base query
+//         let params = [organizationid];
+//         let whereClauses = ["ta.organizationid = $1"];
+
+//         // show only ongoing tasks IF user did not send status filtert ,  If no status selected → Show ongoing tasks.
+//         if (!statusFilter) {
+//             whereClauses.push("ta.active_status = 0");
+//         }
+
+//         //  Status filter (ongoing / complete / overdue)
+//         let active_status;
+//         if (statusFilter) {
+//             const active_status_map = { ongoing: 0, complete: 1, overdue: 2 };
+//             active_status = active_status_map[statusFilter.toLowerCase()];
+//             if (active_status !== undefined) {
+//                 params.push(active_status);
+//                 whereClauses.push(`ta.active_status = $${params.length}`);
+//             }
+//         }
+
+//         // Completion Date Filters (Outside)
+//         if (completion_startDate) {
+//             params.push(completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (completion_endDate) {
+//             params.push(completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // Completion Date Filters (Inside filters object)
+//         if (filters.completion_startDate) {
+//             params.push(filters.completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (filters.completion_endDate) {
+//             params.push(filters.completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // CompletedOn Date Filters — apply only for completed tasks
+//         if (active_status === 1 || statusFilter?.toLowerCase() === "complete") {
+//             if (filters.task_completed_on_startDate) {
+//                 params.push(filters.task_completed_on_startDate);
+//                 whereClauses.push(`ta.completedon >= $${params.length}`);
+//             }
+//             if (filters.task_completed_on_endDate) {
+//                 params.push(filters.task_completed_on_endDate);
+//                 whereClauses.push(`ta.completedon <= $${params.length}`);
+//             }
+//         }
+
+//         // Department Filter
+//         if (filters.department_id?.length) {
+//             params.push(filters.department_id);
+//             whereClauses.push(`us1.deptid = ANY($${params.length})`);
+//         }
+
+//         // Assigned To Filter
+//         if (filters.assigned_to?.length) {
+//             params.push(filters.assigned_to);
+//             whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
+//         }
+
+//         // Assigned By Filter
+//         if (filters.assigned_by?.length) {
+//             params.push(filters.assigned_by);
+//             whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
+//         }
+
+//         // Task Type (Normal / Recurring)
+//         if (filters.type) {
+//             params.push(filters.type.toLowerCase() === "normal" ? '0' : '1');
+//             whereClauses.push(`ta.task_type = $${params.length}`);
+//         }
+
+//         // Frequency Filter
+//         if (filters.frequency) {
+//             params.push(filters.frequency);
+//             whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+//         }
+
+//         //  Department Admin Access Control
+//         if (role === 2) {
+//             params.push(userDeptId);
+//             whereClauses.push(`
+//                 (
+//                     us1.deptid = $${params.length}
+//                     OR assigned_to_id IN (
+//                         SELECT row_id FROM ${schema}.users WHERE deptid = $${params.length}
+//                     )
+//                 )
+//             `);
+//         }
+
+// if (filters.outgoing === true) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         (
+//             -- OUTGOING (A → B)
+//             us1.deptid = $${params.length}
+
+//             OR
+
+//             -- INCOMING (B → A)
+//             us1.deptid <> $${params.length}
+
+//             OR
+
+//             -- INTERNAL (A → A)
+//             us1.deptid = $${params.length}
+//         )
+//     `);
+// }
+
+// if (filters.outgoing === false) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         NOT (
+//             us1.deptid = $${params.length}
+//             AND us.deptid <> $${params.length}
+//         )
+//     `);
+// }
+
+//   const outgoingDeptParamIndex = params.push(userDeptId);
+//         // Pagination
+//         params.push(limit);
+//         params.push(offset);
+
+//         //  Final Query with active user condition
+//         const query = `
+//             SELECT
+//                 ta.row_id,
+//                 ta.title,
+//                 ta.description,
+//                 ta.checklist,
+//                 ta.completion_date,
+//                 ta.completedon,
+//                 us1.name AS created_by,
+//                 CASE
+//                    WHEN dept.department_name IS NULL THEN
+//                        CASE us1.role
+//                           WHEN 3 THEN 'Top Management'
+//                           WHEN 1 THEN 'Admin'
+//                           ELSE 'Unknown'
+//                         END
+//                     ELSE dept.department_name
+//                   END AS created_by_department,
+//                 ta.cr_on AS created_at,
+//                 json_agg(us.name) AS assigned_to,
+//                 json_agg(
+//     json_build_object(
+//         'user_id', us.row_id,
+//         'name', us.name,
+//         'department',
+//             CASE
+//                 WHEN dept2.department_name IS NULL THEN
+//                     CASE us.role
+//                         WHEN 3 THEN 'Top Management'
+//                         WHEN 1 THEN 'Admin'
+//                         ELSE 'Owner'
+//                     END
+//                 ELSE dept2.department_name
+//             END
+//     )
+// ) AS assigned_to_details,
+//                 CASE
+//                     WHEN ta.active_status = 0 THEN 'ongoing'
+//                     WHEN ta.active_status = 1 THEN 'complete'
+//                     WHEN ta.active_status = 2 THEN 'overdue'
+//                 END AS status,
+//                 CASE
+//                     WHEN ta.task_type = '0' THEN 'Normal'
+//                     WHEN ta.task_type = '1' THEN 'Recurring'
+//                 END AS task_type_title,
+//                 CASE
+//                     WHEN ta.active_status = 1 AND ta.completion_date < CURRENT_DATE
+//                         THEN ABS(ta.up_on::date - ta.completion_date)
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN (ta.completion_date - CURRENT_DATE)
+//                     ELSE ABS(ta.completion_date - CURRENT_DATE)
+//                 END AS due_days,
+//                 CASE
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN 'due_in'
+//                     ELSE 'overdue_by'
+//                 END AS due_label,
+//                 us2.name AS updated_by,
+//                          CASE
+//                     WHEN us1.deptid <> $${outgoingDeptParamIndex}
+//                         THEN true
+//                     ELSE false
+//                 END AS is_outgoing,
+//                 ta.task_type,
+//                 rt.row_id as recurring_task_id,
+//                 rt.schedule_details->>'type' AS schedule_type,
+//                 rt.schedule_details->>'reminder_list' AS reminder_list
+//             FROM ${schema}.tasks ta
+//             INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
+//             LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
+//             INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
+//             INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
+//             LEFT JOIN ${schema}.departments dept2 ON us.deptid = dept2.row_id
+//             LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
+//             LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
+//             WHERE ${whereClauses.join(" AND ")}
+//               AND us.activestatus = 0
+//            GROUP BY ta.row_id, ta.checklist, us1.name, dept.department_name,
+// us2.name, rt.schedule_details, rt.row_id, us1.role, us1.deptid
+
+//             ORDER BY ta.cr_on DESC
+//             LIMIT $${params.length - 1} OFFSET $${params.length};
+//         `;
+//         // console.log("role",role)
+
+//         if (role === 1 || role === 3 || role ===2) {
+//             const resp = await db_query.customQuery(query, "Tasks Fetched", params);
+//             console.log("response---->",resp.data)
+//             libFunc.sendResponse(res, resp);
+//         } else {
+//             libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
+//         }
+
+//     } catch (err) {
+//         console.error("Error in fetchTasks:", err);
+//         libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
+//     }
+// }
+
+// v5 dupicate problem
+// async function fetchTasks(req, res) {
+//     // console.log("req",req)
+//     try {
+//         //  Read data from request
+//         const userid = req.data.userId;
+//         const organizationid = req.data.orgId;
+//         const role = req.data.user_role; // 0 = normal, 1 = admin
+//         const statusFilter = req.data.status; // ongoing, complete, overdue
+//         const filters = req.data.filters || {}; // optional filters object
+//         const userDeptId = req.data.depId;
+
+//         const completion_startDate = req.data.completion_startDate;
+//         const completion_endDate = req.data.completion_endDate;
+//         const task_completed_on_startDate = req.data.task_completed_on_startDate;
+//         const task_completed_on_endDate = req.data.task_completed_on_endDate;
+
+//         //  Pagination
+//         const limit = req.data.limit || 100;
+//         const page = req.data.page || 1;
+//         const offset = (page - 1) * limit;
+
+//         // Base query
+//         let params = [organizationid];
+//         let whereClauses = ["ta.organizationid = $1"];
+
+//         // show only ongoing tasks IF user did not send status filtert ,  If no status selected → Show ongoing tasks.
+//         if (!statusFilter) {
+//             whereClauses.push("ta.active_status = 0");
+//         }
+
+//         //  Status filter (ongoing / complete / overdue)
+//         let active_status;
+//         if (statusFilter) {
+//             const active_status_map = { ongoing: 0, complete: 1, overdue: 2 };
+//             active_status = active_status_map[statusFilter.toLowerCase()];
+//             if (active_status !== undefined) {
+//                 params.push(active_status);
+//                 whereClauses.push(`ta.active_status = $${params.length}`);
+//             }
+//         }
+
+//         // Completion Date Filters (Outside)
+//         if (completion_startDate) {
+//             params.push(completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (completion_endDate) {
+//             params.push(completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // Completion Date Filters (Inside filters object)
+//         if (filters.completion_startDate) {
+//             params.push(filters.completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (filters.completion_endDate) {
+//             params.push(filters.completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // CompletedOn Date Filters — apply only for completed tasks
+//         if (active_status === 1 || statusFilter?.toLowerCase() === "complete") {
+//             if (filters.task_completed_on_startDate) {
+//                 params.push(filters.task_completed_on_startDate);
+//                 whereClauses.push(`ta.completedon >= $${params.length}`);
+//             }
+//             if (filters.task_completed_on_endDate) {
+//                 params.push(filters.task_completed_on_endDate);
+//                 whereClauses.push(`ta.completedon <= $${params.length}`);
+//             }
+//         }
+
+//         // Department Filter
+//         if (filters.department_id?.length) {
+//             params.push(filters.department_id);
+//             whereClauses.push(`us1.deptid = ANY($${params.length})`);
+//         }
+
+//         // Assigned To Filter
+//         if (filters.assigned_to?.length) {
+//             params.push(filters.assigned_to);
+//             whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
+//         }
+
+//         // Assigned By Filter
+//         if (filters.assigned_by?.length) {
+//             params.push(filters.assigned_by);
+//             whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
+//         }
+
+//         // Task Type (Normal / Recurring)
+//         if (filters.type) {
+//             params.push(filters.type.toLowerCase() === "normal" ? '0' : '1');
+//             whereClauses.push(`ta.task_type = $${params.length}`);
+//         }
+
+//         // Frequency Filter
+//         if (filters.frequency) {
+//             params.push(filters.frequency);
+//             whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+//         }
+
+//         //  Department Admin Access Control
+//         if (role === 2) {
+//             params.push(userDeptId);
+//             whereClauses.push(`
+//                 (
+//                     us1.deptid = $${params.length}
+//                     OR assigned_to_id IN (
+//                         SELECT row_id FROM ${schema}.users WHERE deptid = $${params.length}
+//                     )
+//                 )
+//             `);
+//         }
+
+// if (filters.outgoing === true) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         (
+//             -- OUTGOING (A → B)
+//             us1.deptid = $${params.length}
+
+//             OR
+
+//             -- INCOMING (B → A)
+//             us1.deptid <> $${params.length}
+
+//             OR
+
+//             -- INTERNAL (A → A)
+//             us1.deptid = $${params.length}
+//         )
+//     `);
+// }
+
+// if (filters.outgoing === false) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         NOT (
+//             us1.deptid = $${params.length}
+//             AND us.deptid <> $${params.length}
+//         )
+//     `);
+// }
+
+//   const outgoingDeptParamIndex = params.push(userDeptId);
+//         // Pagination
+//         params.push(limit);
+//         params.push(offset);
+
+//         //  Final Query with active user condition
+//         const query = `
+//             SELECT
+//                 ta.row_id,
+//                 ta.title,
+//                 ta.description,
+//                 ta.checklist,
+//                 ta.completion_date,
+//                 ta.completedon,
+//                 us1.name AS created_by,
+//                 CASE
+//                    WHEN dept.department_name IS NULL THEN
+//                        CASE us1.role
+//                           WHEN 3 THEN 'Top Management'
+//                           WHEN 1 THEN 'Admin'
+//                           ELSE 'Unknown'
+//                         END
+//                     ELSE dept.department_name
+//                   END AS created_by_department,
+//                 ta.cr_on AS created_at,
+//                 json_agg(us.name) AS assigned_to,
+//                 json_agg(
+//     json_build_object(
+//         'user_id', us.row_id,
+//         'name', us.name,
+//         'department',
+//             CASE
+//                 WHEN dept2.department_name IS NULL THEN
+//                     CASE us.role
+//                         WHEN 3 THEN 'Top Management'
+//                         WHEN 1 THEN 'Admin'
+//                         ELSE 'Owner'
+//                     END
+//                 ELSE dept2.department_name
+//             END
+//     )
+// ) AS assigned_to_details,
+//                 CASE
+//                     WHEN ta.active_status = 0 THEN 'ongoing'
+//                     WHEN ta.active_status = 1 THEN 'complete'
+//                     WHEN ta.active_status = 2 THEN 'overdue'
+//                 END AS status,
+//                 CASE
+//                     WHEN ta.task_type = '0' THEN 'Normal'
+//                     WHEN ta.task_type = '1' THEN 'Recurring'
+//                 END AS task_type_title,
+//                 CASE
+//                     WHEN ta.active_status = 1 AND ta.completion_date < CURRENT_DATE
+//                         THEN ABS(ta.up_on::date - ta.completion_date)
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN (ta.completion_date - CURRENT_DATE)
+//                     ELSE ABS(ta.completion_date - CURRENT_DATE)
+//                 END AS due_days,
+//                 CASE
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN 'due_in'
+//                     ELSE 'overdue_by'
+//                 END AS due_label,
+//                 us2.name AS updated_by,
+
+//                 CASE
+//     WHEN us1.deptid = $${outgoingDeptParamIndex}
+//          AND us.deptid <> $${outgoingDeptParamIndex}
+//     THEN true    -- A → B (Outgoing)
+//     ELSE false   -- B → A (Incoming) or A → A (Internal)
+// END AS is_outgoing,
+
+//                 ta.task_type,
+//                 rt.row_id as recurring_task_id,
+//                 rt.schedule_details->>'type' AS schedule_type,
+//                 rt.schedule_details->>'reminder_list' AS reminder_list
+//             FROM ${schema}.tasks ta
+//             INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
+//             LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
+//             INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
+//             INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
+//             LEFT JOIN ${schema}.departments dept2 ON us.deptid = dept2.row_id
+//             LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
+//             LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
+//             WHERE ${whereClauses.join(" AND ")}
+//               AND us.activestatus = 0
+//           GROUP BY
+//     ta.row_id,
+//     ta.checklist,
+//     us1.name,
+//     dept.department_name,
+//     us2.name,
+//     rt.schedule_details,
+//     rt.row_id,
+//     us1.role,
+//     us1.deptid,
+//     us.deptid
+
+//             ORDER BY ta.cr_on DESC
+//             LIMIT $${params.length - 1} OFFSET $${params.length};
+//         `;
+//         // console.log("role",role)
+
+//         if (role === 1 || role === 3 || role ===2) {
+//             const resp = await db_query.customQuery(query, "Tasks Fetched", params);
+//             console.log("response---->",resp.data)
+//             libFunc.sendResponse(res, resp);
+//         } else {
+//             libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
+//         }
+
+//     } catch (err) {
+//         console.error("Error in fetchTasks:", err);
+//         libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
+//     }
+// }
+
+// v6 admin not include
+// async function fetchTasks(req, res) {
+//     // console.log("req",req)
+//     try {
+//         //  Read data from request
+//         const userid = req.data.userId;
+//         const organizationid = req.data.orgId;
+//         const role = req.data.user_role; // 0 = normal, 1 = admin
+//         const statusFilter = req.data.status; // ongoing, complete, overdue
+//         const filters = req.data.filters || {}; // optional filters object
+//         const userDeptId = req.data.depId;
+
+//         const completion_startDate = req.data.completion_startDate;
+//         const completion_endDate = req.data.completion_endDate;
+//         const task_completed_on_startDate = req.data.task_completed_on_startDate;
+//         const task_completed_on_endDate = req.data.task_completed_on_endDate;
+
+//         //  Pagination
+//         const limit = req.data.limit || 100;
+//         const page = req.data.page || 1;
+//         const offset = (page - 1) * limit;
+
+//         // Base query
+//         let params = [organizationid];
+//         let whereClauses = ["ta.organizationid = $1"];
+
+//         // show only ongoing tasks IF user did not send status filtert ,  If no status selected → Show ongoing tasks.
+//         if (!statusFilter) {
+//             whereClauses.push("ta.active_status = 0");
+//         }
+
+//         //  Status filter (ongoing / complete / overdue)
+//         let active_status;
+//         if (statusFilter) {
+//             const active_status_map = { ongoing: 0, complete: 1, overdue: 2 };
+//             active_status = active_status_map[statusFilter.toLowerCase()];
+//             if (active_status !== undefined) {
+//                 params.push(active_status);
+//                 whereClauses.push(`ta.active_status = $${params.length}`);
+//             }
+//         }
+
+//         // Completion Date Filters (Outside)
+//         if (completion_startDate) {
+//             params.push(completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (completion_endDate) {
+//             params.push(completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // Completion Date Filters (Inside filters object)
+//         if (filters.completion_startDate) {
+//             params.push(filters.completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (filters.completion_endDate) {
+//             params.push(filters.completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // CompletedOn Date Filters — apply only for completed tasks
+//         if (active_status === 1 || statusFilter?.toLowerCase() === "complete") {
+//             if (filters.task_completed_on_startDate) {
+//                 params.push(filters.task_completed_on_startDate);
+//                 whereClauses.push(`ta.completedon >= $${params.length}`);
+//             }
+//             if (filters.task_completed_on_endDate) {
+//                 params.push(filters.task_completed_on_endDate);
+//                 whereClauses.push(`ta.completedon <= $${params.length}`);
+//             }
+//         }
+
+//         // Department Filter
+//         if (filters.department_id?.length) {
+//             params.push(filters.department_id);
+//             whereClauses.push(`us1.deptid = ANY($${params.length})`);
+//         }
+
+//         // Assigned To Filter
+//         if (filters.assigned_to?.length) {
+//             params.push(filters.assigned_to);
+//             whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
+//         }
+
+//         // Assigned By Filter
+//         if (filters.assigned_by?.length) {
+//             params.push(filters.assigned_by);
+//             whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
+//         }
+
+//         // Task Type (Normal / Recurring)
+//         if (filters.type) {
+//             params.push(filters.type.toLowerCase() === "normal" ? '0' : '1');
+//             whereClauses.push(`ta.task_type = $${params.length}`);
+//         }
+
+//         // Frequency Filter
+//         if (filters.frequency) {
+//             params.push(filters.frequency);
+//             whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+//         }
+
+//         //  Department Admin Access Control
+//         if (role === 2) {
+//             params.push(userDeptId);
+//             whereClauses.push(`
+//                 (
+//                     us1.deptid = $${params.length}
+//                     OR assigned_to_id IN (
+//                         SELECT row_id FROM ${schema}.users WHERE deptid = $${params.length}
+//                     )
+//                 )
+//             `);
+//         }
+
+// if (filters.outgoing === true) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         (
+//             -- OUTGOING (A → B)
+//             us1.deptid = $${params.length}
+
+//             OR
+
+//             -- INCOMING (B → A)
+//             us1.deptid <> $${params.length}
+
+//             OR
+
+//             -- INTERNAL (A → A)
+//             us1.deptid = $${params.length}
+//         )
+//     `);
+// }
+
+// if (filters.outgoing === false) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         NOT (
+//             us1.deptid = $${params.length}
+//             AND us.deptid <> $${params.length}
+//         )
+//     `);
+// }
+
+//   const outgoingDeptParamIndex = params.push(userDeptId);
+//         // Pagination
+//         params.push(limit);
+//         params.push(offset);
+
+//         //  Final Query with active user condition
+//         const query = `
+//             SELECT
+//                 ta.row_id,
+//                 ta.title,
+//                 ta.description,
+//                 ta.checklist,
+//                 ta.completion_date,
+//                 ta.completedon,
+//                 us1.name AS created_by,
+//                 CASE
+//                    WHEN dept.department_name IS NULL THEN
+//                        CASE us1.role
+//                           WHEN 3 THEN 'Top Management'
+//                           WHEN 1 THEN 'Admin'
+//                           ELSE 'Unknown'
+//                         END
+//                     ELSE dept.department_name
+//                   END AS created_by_department,
+//                 ta.cr_on AS created_at,
+//                 json_agg(DISTINCT us.name) AS assigned_to,
+//                json_agg(
+//     DISTINCT jsonb_build_object(
+//         'user_id', us.row_id,
+//         'name', us.name,
+//         'department',
+//             CASE
+//                 WHEN dept2.department_name IS NULL THEN
+//                     CASE us.role
+//                         WHEN 3 THEN 'Top Management'
+//                         WHEN 1 THEN 'Admin'
+//                         ELSE 'Owner'
+//                     END
+//                 ELSE dept2.department_name
+//             END
+//     )
+// ) AS assigned_to_details,
+//                 CASE
+//                     WHEN ta.active_status = 0 THEN 'ongoing'
+//                     WHEN ta.active_status = 1 THEN 'complete'
+//                     WHEN ta.active_status = 2 THEN 'overdue'
+//                 END AS status,
+//                 CASE
+//                     WHEN ta.task_type = '0' THEN 'Normal'
+//                     WHEN ta.task_type = '1' THEN 'Recurring'
+//                 END AS task_type_title,
+//                 CASE
+//                     WHEN ta.active_status = 1 AND ta.completion_date < CURRENT_DATE
+//                         THEN ABS(ta.up_on::date - ta.completion_date)
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN (ta.completion_date - CURRENT_DATE)
+//                     ELSE ABS(ta.completion_date - CURRENT_DATE)
+//                 END AS due_days,
+//                 CASE
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN 'due_in'
+//                     ELSE 'overdue_by'
+//                 END AS due_label,
+//                 us2.name AS updated_by,
+
+//               CASE
+//     WHEN us1.deptid = $${outgoingDeptParamIndex}
+//          AND EXISTS (
+//              SELECT 1
+//              FROM jsonb_array_elements_text(ta.assigned_to) x
+//              JOIN ${schema}.users u ON u.row_id = x::text
+//              WHERE u.deptid <> $${outgoingDeptParamIndex}
+//          )
+//     THEN true
+//     ELSE false
+// END AS is_outgoing,
+
+//                 ta.task_type,
+//                 rt.row_id as recurring_task_id,
+//                 rt.schedule_details->>'type' AS schedule_type,
+//                 rt.schedule_details->>'reminder_list' AS reminder_list
+//             FROM ${schema}.tasks ta
+//             INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
+//             LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
+//             INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
+//             INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
+//             LEFT JOIN ${schema}.departments dept2 ON us.deptid = dept2.row_id
+//             LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
+//             LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
+//             WHERE ${whereClauses.join(" AND ")}
+//               AND us.activestatus = 0
+//           GROUP BY
+//     ta.row_id,
+//     ta.checklist,
+//     us1.name,
+//     dept.department_name,
+//     us2.name,
+//     rt.schedule_details,
+//     rt.row_id,
+//     us1.role,
+//     us1.deptid,
+//     us.deptid
+
+//             ORDER BY ta.cr_on DESC
+//             LIMIT $${params.length - 1} OFFSET $${params.length};
+//         `;
+//         // console.log("role",role)
+
+//         if (role === 1 || role === 3 || role ===2) {
+//             const resp = await db_query.customQuery(query, "Tasks Fetched", params);
+//             console.log("response---->",resp.data)
+//             libFunc.sendResponse(res, resp);
+//         } else {
+//             libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
+//         }
+
+//     } catch (err) {
+//         console.error("Error in fetchTasks:", err);
+//         libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
+//     }
+// }
 
 function Dateformatechange(d) {
   const date = new Date(d);
@@ -6092,6 +8041,586 @@ function Dateformatechange(d) {
   return customFormattedDate;
 }
 
+// async function fetchTasks(req, res) {
+//     // console.log("req",req)
+//     try {
+//         //  Read data from request
+//         const userid = req.data.userId;
+//         const organizationid = req.data.orgId;
+//         const role = req.data.user_role; // 0 = normal, 1 = admin
+//         const statusFilter = req.data.status; // ongoing, complete, overdue
+//         const filters = req.data.filters || {}; // optional filters object
+//         const userDeptId = req.data.depId;
+
+//         const completion_startDate = req.data.completion_startDate;
+//         const completion_endDate = req.data.completion_endDate;
+//         const task_completed_on_startDate = req.data.task_completed_on_startDate;
+//         const task_completed_on_endDate = req.data.task_completed_on_endDate;
+
+//         //  Pagination
+//         const limit = req.data.limit || 100;
+//         const page = req.data.page || 1;
+//         const offset = (page - 1) * limit;
+
+//         // Base query
+//         let params = [organizationid];
+//         let whereClauses = ["ta.organizationid = $1"];
+
+//         // show only ongoing tasks IF user did not send status filtert ,  If no status selected → Show ongoing tasks.
+//         if (!statusFilter) {
+//             whereClauses.push("ta.active_status = 0");
+//         }
+
+//         //  Status filter (ongoing / complete / overdue)
+//         let active_status;
+//         if (statusFilter) {
+//             const active_status_map = { ongoing: 0, complete: 1, overdue: 2 };
+//             active_status = active_status_map[statusFilter.toLowerCase()];
+//             if (active_status !== undefined) {
+//                 params.push(active_status);
+//                 whereClauses.push(`ta.active_status = $${params.length}`);
+//             }
+//         }
+
+//         // Completion Date Filters (Outside)
+//         if (completion_startDate) {
+//             params.push(completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (completion_endDate) {
+//             params.push(completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // Completion Date Filters (Inside filters object)
+//         if (filters.completion_startDate) {
+//             params.push(filters.completion_startDate);
+//             whereClauses.push(`ta.completion_date >= $${params.length}`);
+//         }
+//         if (filters.completion_endDate) {
+//             params.push(filters.completion_endDate);
+//             whereClauses.push(`ta.completion_date <= $${params.length}`);
+//         }
+
+//         // CompletedOn Date Filters — apply only for completed tasks
+//         if (active_status === 1 || statusFilter?.toLowerCase() === "complete") {
+//             if (filters.task_completed_on_startDate) {
+//                 params.push(filters.task_completed_on_startDate);
+//                 whereClauses.push(`ta.completedon >= $${params.length}`);
+//             }
+//             if (filters.task_completed_on_endDate) {
+//                 params.push(filters.task_completed_on_endDate);
+//                 whereClauses.push(`ta.completedon <= $${params.length}`);
+//             }
+//         }
+
+//         // Department Filter
+//         if (filters.department_id?.length) {
+//             params.push(filters.department_id);
+//             whereClauses.push(`us1.deptid = ANY($${params.length})`);
+//         }
+
+//         // Assigned To Filter
+//         if (filters.assigned_to?.length) {
+//             params.push(filters.assigned_to);
+//             whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
+//         }
+
+//         // Assigned By Filter
+//         if (filters.assigned_by?.length) {
+//             params.push(filters.assigned_by);
+//             whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
+//         }
+
+//         // Task Type (Normal / Recurring)
+//         if (filters.type) {
+//             params.push(filters.type.toLowerCase() === "normal" ? '0' : '1');
+//             whereClauses.push(`ta.task_type = $${params.length}`);
+//         }
+
+//         // Frequency Filter
+//         if (filters.frequency) {
+//             params.push(filters.frequency);
+//             whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+//         }
+
+//         //  Department Admin Access Control
+//         if (role === 2) {
+//             params.push(userDeptId);
+//             whereClauses.push(`
+//                 (
+//                     us1.deptid = $${params.length}
+//                     OR assigned_to_id IN (
+//                         SELECT row_id FROM ${schema}.users WHERE deptid = $${params.length}
+//                     )
+//                 )
+//             `);
+//         }
+
+// if (filters.outgoing === true) {
+
+//     // If admin has NO department → show all tasks
+//     if (!userDeptId) {
+//         whereClauses.push(`1=1`); // no filter
+//     } else {
+//         params.push(userDeptId);
+//         whereClauses.push(`
+//             (
+//                 -- OUTGOING (A → B)
+//                 us1.deptid = $${params.length}
+
+//                 OR
+
+//                 -- INCOMING (B → A)
+//                 us.deptid = $${params.length}
+
+//                 OR
+
+//                 -- INTERNAL (A → A)
+//                 us1.deptid = $${params.length}
+//             )
+//         `);
+//     }
+// }
+
+// if (filters.outgoing === false) {
+//     params.push(userDeptId);
+//     whereClauses.push(`
+//         NOT (
+//             us1.deptid = $${params.length}
+//             AND us.deptid <> $${params.length}
+//         )
+//     `);
+// }
+
+// //   const outgoingDeptParamIndex = params.push(userDeptId);
+//         // Pagination
+//         params.push(limit);
+//         params.push(offset);
+
+//         //  Final Query with active user condition
+//         const query = `
+//             SELECT
+//                 ta.row_id,
+//                 ta.title,
+//                 ta.description,
+//                 ta.checklist,
+//                 ta.completion_date,
+//                 ta.completedon,
+//                 us1.name AS created_by,
+//                 CASE
+//                    WHEN dept.department_name IS NULL THEN
+//                        CASE us1.role
+//                           WHEN 3 THEN 'Top Management'
+//                           WHEN 1 THEN 'Admin'
+//                           ELSE 'Unknown'
+//                         END
+//                     ELSE dept.department_name
+//                   END AS created_by_department,
+//                 ta.cr_on AS created_at,
+//                 json_agg(DISTINCT us.name) AS assigned_to,
+//                json_agg(
+//     DISTINCT jsonb_build_object(
+//         'user_id', us.row_id,
+//         'name', us.name,
+//         'department',
+//             CASE
+//                 WHEN dept2.department_name IS NULL THEN
+//                     CASE us.role
+//                         WHEN 3 THEN 'Top Management'
+//                         WHEN 1 THEN 'Admin'
+//                         ELSE 'Owner'
+//                     END
+//                 ELSE dept2.department_name
+//             END
+//     )
+// ) AS assigned_to_details,
+//                 CASE
+//                     WHEN ta.active_status = 0 THEN 'ongoing'
+//                     WHEN ta.active_status = 1 THEN 'complete'
+//                     WHEN ta.active_status = 2 THEN 'overdue'
+//                 END AS status,
+//                 CASE
+//                     WHEN ta.task_type = '0' THEN 'Normal'
+//                     WHEN ta.task_type = '1' THEN 'Recurring'
+//                 END AS task_type_title,
+//                 CASE
+//                     WHEN ta.active_status = 1 AND ta.completion_date < CURRENT_DATE
+//                         THEN ABS(ta.up_on::date - ta.completion_date)
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN (ta.completion_date - CURRENT_DATE)
+//                     ELSE ABS(ta.completion_date - CURRENT_DATE)
+//                 END AS due_days,
+//                 CASE
+//                     WHEN ta.completion_date >= CURRENT_DATE
+//                         THEN 'due_in'
+//                     ELSE 'overdue_by'
+//                 END AS due_label,
+//                 us2.name AS updated_by,
+
+//  CASE
+
+//     WHEN us1.deptid IS NOT NULL
+//          AND EXISTS (
+//              SELECT 1
+//              FROM jsonb_array_elements_text(ta.assigned_to) AS x
+//              JOIN ${schema}.users u
+//                   ON u.row_id = x::text
+//              WHERE u.deptid IS NOT NULL
+//                AND u.deptid <> us1.deptid     -- other department
+//          )
+//     THEN TRUE
+
+//     WHEN us1.deptid IS NOT NULL
+//          AND EXISTS (
+//              SELECT 1
+//              FROM jsonb_array_elements_text(ta.assigned_to) AS x
+//              JOIN ${schema}.users u
+//                   ON u.row_id = x::text
+//              WHERE u.role = 1                 -- assigned to admin
+//          )
+//     THEN TRUE
+
+//     ELSE FALSE
+// END AS is_outgoing,
+
+//                 ta.task_type,
+//                 rt.row_id as recurring_task_id,
+//                 rt.schedule_details->>'type' AS schedule_type,
+//                 rt.schedule_details->>'reminder_list' AS reminder_list
+//             FROM ${schema}.tasks ta
+//             INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
+//             LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
+//             INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
+//             INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
+//             LEFT JOIN ${schema}.departments dept2 ON us.deptid = dept2.row_id
+//             LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
+//             LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
+//             WHERE ${whereClauses.join(" AND ")}
+//               AND us.activestatus = 0
+//           GROUP BY
+//     ta.row_id,
+//     ta.checklist,
+//     us1.name,
+//     dept.department_name,
+//     us2.name,
+//     rt.schedule_details,
+//     rt.row_id,
+//     us1.role,
+//     us1.deptid
+
+//             ORDER BY ta.cr_on DESC
+//             LIMIT $${params.length - 1} OFFSET $${params.length};
+//         `;
+//         // console.log("role",role)
+
+//         if (role === 1 || role === 3 || role ===2) {
+//             const resp = await db_query.customQuery(query, "Tasks Fetched", params);
+//             console.log("response---->",resp.data)
+//             libFunc.sendResponse(res, resp);
+//         } else {
+//             libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
+//         }
+
+//     } catch (err) {
+//         console.error("Error in fetchTasks:", err);
+//         libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
+//     }
+// }
+
+async function fetchTasks(req, res) {
+  try {
+    const userid = req.data.userId;
+    const organizationid = req.data.orgId;
+    const role = req.data.user_role;
+    const statusFilter = req.data.status;
+    const filters = req.data.filters || {};
+    const userDeptId = req.data.depId;
+
+    const completion_startDate = req.data.completion_startDate;
+    const completion_endDate = req.data.completion_endDate;
+
+    const limit = req.data.limit || 100;
+    const page = req.data.page || 1;
+    const offset = (page - 1) * limit;
+
+    let params = [organizationid];
+    let whereClauses = ["ta.organizationid = $1"];
+
+    // -----------------------------------------
+    // STATUS FILTER
+    // -----------------------------------------
+    if (!statusFilter) whereClauses.push("ta.active_status = 0");
+
+    let active_status;
+    if (statusFilter) {
+      const map = { ongoing: 0, complete: 1, overdue: 2 };
+      active_status = map[statusFilter.toLowerCase()];
+      if (active_status !== undefined) {
+        params.push(active_status);
+        whereClauses.push(`ta.active_status = $${params.length}`);
+      }
+    }
+
+    // -----------------------------------------
+    // COMPLETION DATE RANGE
+    // -----------------------------------------
+    if (completion_startDate) {
+      params.push(completion_startDate);
+      whereClauses.push(`ta.completion_date >= $${params.length}`);
+    }
+    if (completion_endDate) {
+      params.push(completion_endDate);
+      whereClauses.push(`ta.completion_date <= $${params.length}`);
+    }
+
+    if (filters.completion_startDate) {
+      params.push(filters.completion_startDate);
+      whereClauses.push(`ta.completion_date >= $${params.length}`);
+    }
+    if (filters.completion_endDate) {
+      params.push(filters.completion_endDate);
+      whereClauses.push(`ta.completion_date <= $${params.length}`);
+    }
+
+    // -----------------------------------------
+    // COMPLETED ON (for completed tasks only)
+    // -----------------------------------------
+    if (active_status === 1) {
+      if (filters.task_completed_on_startDate) {
+        params.push(filters.task_completed_on_startDate);
+        whereClauses.push(`ta.completedon >= $${params.length}`);
+      }
+      if (filters.task_completed_on_endDate) {
+        params.push(filters.task_completed_on_endDate);
+        whereClauses.push(`ta.completedon <= $${params.length}`);
+      }
+    }
+
+    // -----------------------------------------
+    // DEFAULT: PUSH userDeptId ONCE
+    // -----------------------------------------
+    let userDeptIdx = null;
+    if (userDeptId) {
+      params.push(userDeptId);
+      userDeptIdx = params.length; // <-- IMPORTANT
+    }
+
+    // -----------------------------------------
+    // DEPARTMENT FILTER
+    // -----------------------------------------
+    if (filters.department_id?.length) {
+      params.push(filters.department_id);
+      whereClauses.push(`us1.deptid = ANY($${params.length})`);
+    }
+
+    // ASSIGNED TO
+    if (filters.assigned_to?.length) {
+      params.push(filters.assigned_to);
+      whereClauses.push(`assigned_to_id::text = ANY($${params.length})`);
+    }
+
+    // ASSIGNED BY
+    if (filters.assigned_by?.length) {
+      params.push(filters.assigned_by);
+      whereClauses.push(`ta.assigned_by = ANY($${params.length})`);
+    }
+
+    // TASK TYPE
+    if (filters.type) {
+      params.push(filters.type.toLowerCase() === "normal" ? "0" : "1");
+      whereClauses.push(`ta.task_type = $${params.length}`);
+    }
+
+    // FREQUENCY
+    if (filters.frequency) {
+      params.push(filters.frequency);
+      whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+    }
+
+    // -----------------------------------------
+    // ADMIN (role=2) FILTER → USE SAME PARAM INDEX
+    // -----------------------------------------
+    if (role === 2 && userDeptIdx) {
+      whereClauses.push(`
+                (
+                    us1.deptid = $${userDeptIdx}
+                    OR assigned_to_id IN (
+                        SELECT row_id 
+                        FROM ${schema}.users 
+                        WHERE deptid = $${userDeptIdx}
+                    )
+                )
+            `);
+    }
+
+    // -----------------------------------------
+    // OUTGOING FILTER (frontend toggle)
+    // -----------------------------------------
+    if (filters.outgoing === true) {
+      if (!userDeptId) {
+        whereClauses.push(`1=1`);
+      } else {
+        whereClauses.push(`
+                    (
+                        us1.deptid = $${userDeptIdx}   -- Outgoing A→B
+                        OR us.deptid = $${userDeptIdx} -- Incoming B→A
+                        OR us1.deptid = $${userDeptIdx} -- Internal A→A
+                    )
+                `);
+      }
+    }
+
+    if (filters.outgoing === false && userDeptIdx) {
+      whereClauses.push(`
+                NOT (
+                    us1.deptid = $${userDeptIdx}
+                    AND us.deptid <> $${userDeptIdx}
+                )
+            `);
+    }
+
+    // -----------------------------------------
+    // PAGINATION PARAMS
+    // -----------------------------------------
+    params.push(limit);
+    params.push(offset);
+
+    // -----------------------------------------
+    // FINAL QUERY
+    // -----------------------------------------
+    const query = `
+            SELECT
+                ta.row_id,
+                ta.title,
+                ta.description,
+                ta.checklist,
+                ta.completion_date,
+                ta.completedon,
+                us1.name AS created_by,
+
+                CASE 
+                    WHEN dept.department_name IS NULL THEN 
+                        CASE us1.role WHEN 3 THEN 'Top Management'
+                                      WHEN 1 THEN 'Admin'
+                                      ELSE 'Unknown'
+                        END
+                    ELSE dept.department_name
+                END AS created_by_department,
+
+                ta.cr_on AS created_at,
+
+                json_agg(DISTINCT us.name) AS assigned_to,
+
+                json_agg(DISTINCT jsonb_build_object(
+                    'user_id', us.row_id,
+                    'name', us.name,
+                    'department',
+                        CASE 
+                            WHEN dept2.department_name IS NULL THEN 
+                                CASE us.role 
+                                    WHEN 3 THEN 'Top Management'
+                                    WHEN 1 THEN 'Admin'
+                                    ELSE 'Owner'
+                                END
+                            ELSE dept2.department_name
+                        END
+                )) AS assigned_to_details,
+
+                CASE
+                    WHEN ta.active_status = 0 THEN 'ongoing'
+                    WHEN ta.active_status = 1 THEN 'complete'
+                    WHEN ta.active_status = 2 THEN 'overdue'
+                END AS status,
+
+                CASE WHEN ta.task_type = '0' THEN 'Normal' ELSE 'Recurring' END AS task_type_title,
+
+                CASE
+                    WHEN ta.completion_date >= CURRENT_DATE THEN (ta.completion_date - CURRENT_DATE)
+                    ELSE ABS(ta.completion_date - CURRENT_DATE)
+                END AS due_days,
+
+                CASE 
+                    WHEN ta.completion_date >= CURRENT_DATE THEN 'due_in'
+                    ELSE 'overdue_by'
+                END AS due_label,
+
+                us2.name AS updated_by,
+
+                /* ------------------------------------------
+                   CORRECT OUTGOING LOGIC
+                ------------------------------------------ */
+                CASE
+                    WHEN ${
+                      userDeptIdx ? `us1.deptid = $${userDeptIdx}` : `FALSE`
+                    }
+                        AND EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements_text(ta.assigned_to) AS x
+                            JOIN ${schema}.users u ON u.row_id = x::text
+                            WHERE u.deptid IS NOT NULL
+                              AND u.deptid <> ${
+                                userDeptIdx ? `$${userDeptIdx}` : `NULL`
+                              }
+                        )
+                    THEN TRUE
+
+                    WHEN ${
+                      userDeptIdx ? `us1.deptid = $${userDeptIdx}` : `FALSE`
+                    }
+                        AND EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements_text(ta.assigned_to) AS x
+                            JOIN ${schema}.users u ON u.row_id = x::text
+                            WHERE u.role = 1
+                        )
+                    THEN TRUE
+
+                    ELSE FALSE
+                END AS is_outgoing,
+
+                ta.task_type,
+                rt.row_id AS recurring_task_id,
+                rt.schedule_details->>'type' AS schedule_type,
+                rt.schedule_details->>'reminder_list' AS reminder_list
+
+            FROM ${schema}.tasks ta
+            INNER JOIN ${schema}.users us1 ON ta.assigned_by = us1.row_id
+            LEFT JOIN ${schema}.departments dept ON us1.deptid = dept.row_id
+            INNER JOIN LATERAL jsonb_array_elements_text(ta.assigned_to) AS assigned_to_id ON TRUE
+            INNER JOIN ${schema}.users us ON us.row_id = assigned_to_id::text
+            LEFT JOIN ${schema}.departments dept2 ON us.deptid = dept2.row_id
+            LEFT JOIN ${schema}.users us2 ON ta.completed_by = us2.row_id
+            LEFT JOIN ${schema}.recurring_task rt ON ta.recurringid = rt.row_id
+            WHERE ${whereClauses.join(" AND ")}
+              AND us.activestatus = 0
+            GROUP BY 
+                ta.row_id,
+                ta.checklist,
+                us1.name,
+                dept.department_name,
+                us2.name,
+                rt.schedule_details,
+                rt.row_id,
+                us1.role,
+                us1.deptid
+            ORDER BY ta.cr_on DESC
+            LIMIT $${params.length - 1} OFFSET $${params.length};
+        `;
+
+    if (role === 1 || role === 3 || role === 2) {
+      const resp = await db_query.customQuery(query, "Tasks Fetched", params);
+      console.log("resposne--", resp.data);
+      libFunc.sendResponse(res, resp);
+    } else {
+      libFunc.sendResponse(res, { status: 1, msg: "You are not admin" });
+    }
+  } catch (err) {
+    console.error("Error in fetchTasks:", err);
+    libFunc.sendResponse(res, { status: 0, msg: "Error fetching tasks" });
+  }
+}
+
 async function exportTasksToExcel(req, res) {
   // console.log("coomon url")
   try {
@@ -6103,6 +8632,7 @@ async function exportTasksToExcel(req, res) {
     const completion_endDate = req.data.completion_endDate;
     const task_completed_on_startDate = req.data.task_completed_on_startDate;
     const task_completed_on_endDate = req.data.task_completed_on_endDate;
+    const userDeptId = req.data.depId;
 
     let params = [organizationid];
     let whereClauses = ["ta.organizationid = $1"];
@@ -6179,6 +8709,18 @@ async function exportTasksToExcel(req, res) {
     if (filters.frequency) {
       params.push(filters.frequency);
       whereClauses.push(`rt.schedule_details->>'type' = $${params.length}`);
+    }
+
+    if (role === 2) {
+      params.push(userDeptId);
+      whereClauses.push(`
+                (
+                    us1.deptid = $${params.length} 
+                    OR assigned_to_id IN (
+                        SELECT row_id FROM ${schema}.users WHERE deptid = $${params.length}
+                    )
+                )
+            `);
     }
 
     const query = `
@@ -6334,8 +8876,8 @@ async function exportTasksToExcel(req, res) {
 
     //    console.log("filePath",fileUrl)
 
-    //    serverUrl = "http://192.168.20.182:8000/"
-    serverUrl = "https://prosys.ftisindia.com/";
+    serverUrl = "http://192.168.20.192:8000/";
+    // serverUrl = "https://prosys.ftisindia.com/"
 
     let response = {
       status: 0,
@@ -6557,6 +9099,8 @@ async function testdata(req, res) {
   // checkDueDateForToday()
 }
 
+// checkOverdueTasks()
+
 async function fetchlastImporttask(req, res) {
   try {
     const organizationid = req.data.orgId;
@@ -6646,7 +9190,14 @@ async function fetchInactiveUserList(req, res) {
   var offset = (page - 1) * limit;
   let query, params;
 
-  query = `SELECT us.name,us.row_id,us.image_url as photo_path,de.department_name as dep_name
+  query = `SELECT us.name,us.row_id,us.image_url as photo_path,de.department_name as dep_name,
+            CASE 
+                WHEN us.role = 0 THEN 'User'
+                WHEN us.role = 1 THEN 'Admin'
+                WHEN us.role = 2 THEN 'Dept-admin'
+                WHEN us.role = 3 THEN 'Top-management'
+                ELSE 'unknown'
+            END AS rolevalue
             FROM ${schema}.users us
             LEFT JOIN ${schema}.departments de on us.deptid=de.row_id
             WHERE us.organizationid = $1 AND us.activestatus = 1
@@ -6684,14 +9235,44 @@ async function fetchInactiveUserList(req, res) {
   });
 }
 
+// /**
+//  *  Generate a Task Summary Report and report should be automatically shared via WhatsApp
+//  */
+
 async function fetchTaskSummary(period = "weekly", schema = "prosys") {
-  const today = moment().tz("Asia/Kolkata");
-  const startDate = "2024-09-01";
-  const endDate = "2025-11-15";
+  // Get current datetime
+  const nowIST = new Date();
+
+  // Format helper (YYYY-MM-DD)
+  const formatDate = (d) => d.toISOString().split("T")[0];
+
+  // Exclude today -> endDate = yesterday
+  const endDateObj = new Date(nowIST);
+  endDateObj.setDate(endDateObj.getDate() - 1);
+  const endDate = formatDate(endDateObj);
+
+  let startDateObj = new Date(nowIST);
+
+  if (period === "weekly") {
+    // Last 7 days (excluding today)
+    startDateObj.setDate(startDateObj.getDate() - 7);
+  } else if (period === "monthly") {
+    // First day of the current month
+    startDateObj.setDate(1);
+  }
+
+  const startDate = formatDate(startDateObj);
+
+  // const startDate = "2025-11-17";
+  // const endDate = "2025-11-30";
+
+  // console.log("startDate:", startDate);
+  // console.log("endDate:", endDate);
 
   const query = `
   SELECT
       t.row_id AS task_id,
+      t.cr_on::date,
       t.title,
       t.description,
       t.completion_date,
@@ -6715,12 +9296,13 @@ async function fetchTaskSummary(period = "weekly", schema = "prosys") {
       END AS task_type_title,
       CASE
           WHEN t.active_status = 1 AND t.completion_date < CURRENT_DATE 
-              THEN ABS(t.up_on::date - t.completion_date) 
+              THEN t.up_on::date - t.completion_date
           WHEN t.completion_date >= CURRENT_DATE 
               THEN (t.completion_date - CURRENT_DATE)
-          ELSE ABS(t.completion_date - CURRENT_DATE)
+          ELSE t.completion_date - CURRENT_DATE
       END AS due_days,
       CASE
+                    WHEN t.active_status = 1 THEN 'completed'
                     WHEN t.completion_date >= CURRENT_DATE 
                         THEN 'due_in'
                     ELSE 'overdue_by'
@@ -6733,10 +9315,12 @@ async function fetchTaskSummary(period = "weekly", schema = "prosys") {
   LEFT JOIN ${schema}.departments d ON u2.deptid = d.row_id
   LEFT JOIN ${schema}.organizations o ON t.organizationid = o.row_id
   WHERE t.cr_on::date BETWEEN '${startDate}' AND '${endDate}'
+  AND (u2.activestatus = 0 OR u2.activestatus IS NULL)
   ORDER BY o.organization_name, d.department_name, t.completion_date;
   `;
 
   const result = await queries.custom_query(query);
+  //   console.log("result----",result)
   return result;
 }
 
@@ -6744,9 +9328,7 @@ async function fetchDepartmentSummary(startDate, endDate, orgID) {
   const query = `
   WITH task_users AS (
     SELECT
-      t.row_id,
-      u.row_id AS user_id,
-      u.name AS user_name,
+      t.row_id AS task_id,
       d.department_name,
       t.active_status
     FROM prosys.tasks t
@@ -6755,26 +9337,31 @@ async function fetchDepartmentSummary(startDate, endDate, orgID) {
     LEFT JOIN prosys.departments d ON u.deptid = d.row_id
     WHERE 
       t.organizationid = '${orgID}' 
-      AND t.completion_date BETWEEN '${startDate}' AND '${endDate}'
+      AND t.cr_on::date BETWEEN '${startDate}' AND '${endDate}'
+      AND (u.activestatus = 0 OR u.activestatus IS NULL)
+  ),
+  unique_tasks AS (
+    SELECT DISTINCT task_id, department_name, active_status
+    FROM task_users
+    WHERE department_name IS NOT NULL
   )
   SELECT
     department_name,
     COUNT(*) FILTER (WHERE active_status = 0) AS ongoing_count,
     COUNT(*) FILTER (WHERE active_status = 1) AS complete_count,
     COUNT(*) FILTER (WHERE active_status = 2) AS overdue_count
-  FROM task_users
-  WHERE department_name IS NOT NULL 
+  FROM unique_tasks
   GROUP BY department_name
   ORDER BY department_name;
-`;
+  `;
   return await queries.custom_query(query);
 }
 
-// Utility function to add header
+// add pdf header
 function addHeader(doc, orgName, deptName, headerImgPath, startDate, endDate) {
   try {
     if (fs.existsSync(headerImgPath)) {
-      doc.image(headerImgPath, doc.page.margins.left, 10, { width: 100 });
+      doc.image(headerImgPath, 25, 10, { width: 100 });
     }
   } catch (e) {
     console.log("Header image not found:", e.message);
@@ -6786,9 +9373,21 @@ function addHeader(doc, orgName, deptName, headerImgPath, startDate, endDate) {
     .fillColor("#000000")
     .text(`${orgName} - ${deptName}`, 150, 25, { align: "left" });
 
+  function formatDate(dateStr) {
+    const d = new Date(dateStr);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  }
+
   // Format dates
-  const formattedStartDate = moment(startDate).format("DD-MM-YYYY");
-  const formattedEndDate = moment(endDate).format("DD-MM-YYYY");
+  const formattedStartDate = formatDate(startDate);
+  const formattedEndDate = formatDate(endDate);
+
+  //   console.log("StartDate->",startDate ,"EndDate->",endDate)
+
+  //   console.log("formattedStartDate->",formattedStartDate ,"formattedEndDate->",formattedEndDate)
 
   // Subheader: generated by + date range
   doc
@@ -6812,7 +9411,7 @@ function addHeader(doc, orgName, deptName, headerImgPath, startDate, endDate) {
     .stroke();
 }
 
-// Utility function to add table header
+// function to add table header
 function drawTableHeader(doc, headers, colWidths, x, y, headerBg = "#1a237e") {
   const totalWidth = colWidths.reduce((a, b) => a + b, 0);
 
@@ -6855,7 +9454,7 @@ function drawTableHeader(doc, headers, colWidths, x, y, headerBg = "#1a237e") {
   return y + 25;
 }
 
-// Utility function to add table rows
+// function to add table rows
 function drawTableRow(
   doc,
   row,
@@ -6907,15 +9506,42 @@ function drawTableRow(
 }
 
 // Main PDF generator
+
 async function generateTaskReportPDF(tasks, period, schema) {
   const reports = [];
   const MARGIN_LEFT = 40,
     MARGIN_RIGHT = 30;
-  const today = moment().tz("Asia/Kolkata");
-  const startDate = "2024-09-01";
-  const endDate = "2025-11-15";
 
-  // Group tasks by organization
+  // Get current  datetime
+  const nowIST = new Date();
+
+  // Format helper (YYYY-MM-DD)
+  const formatDate = (d) => d.toISOString().split("T")[0];
+
+  // Exclude today → endDate = yesterday
+  const endDateObj = new Date(nowIST);
+  endDateObj.setDate(endDateObj.getDate() - 1);
+  const endDate = formatDate(endDateObj);
+
+  let startDateObj = new Date(nowIST);
+
+  if (period === "weekly") {
+    // Last 7 days (excluding today)
+    startDateObj.setDate(startDateObj.getDate() - 7);
+  } else if (period === "monthly") {
+    // First day of the current month
+    startDateObj.setDate(1);
+  }
+
+  const startDate = formatDate(startDateObj);
+
+  // const startDate = "2025-11-17";
+  // const endDate = "2025-11-30";
+
+  // console.log("startDate:", startDate);
+  // console.log("endDate:", endDate);
+
+  // Group by organization
   const orgGroups = tasks.reduce((acc, task) => {
     const orgId = task.organizationid || "unknown_org";
     if (!acc[orgId]) acc[orgId] = [];
@@ -6926,7 +9552,6 @@ async function generateTaskReportPDF(tasks, period, schema) {
   for (const [organizationid, orgTasks] of Object.entries(orgGroups)) {
     const orgName = orgTasks[0]?.organization_name || "Unknown Organization";
 
-    // Create org folder
     const orgFolder = path.join("./public/uploads", organizationid);
     if (!fs.existsSync(orgFolder)) fs.mkdirSync(orgFolder, { recursive: true });
 
@@ -6937,6 +9562,10 @@ async function generateTaskReportPDF(tasks, period, schema) {
       acc[dept].push(t);
       return acc;
     }, {});
+
+    if (!deptGroups["Owner"]) {
+      deptGroups["Owner"] = [];
+    }
 
     for (const [deptName, deptTasks] of Object.entries(deptGroups)) {
       const deptFolder = path.join(orgFolder, deptName.replace(/\s+/g, "_"));
@@ -6957,40 +9586,62 @@ async function generateTaskReportPDF(tasks, period, schema) {
       const writeStream = fs.createWriteStream(filePath);
       doc.pipe(writeStream);
 
-      const rootPath = __dirname.slice(0, 28);
-      console.log("v", rootPath);
+      const rootPath = path.dirname(__dirname);
+      // console.log("__dirname", __dirname)
+      // console.log("rootPath", rootPath)
       const headerImgPath = path.join(
         rootPath,
         "uploads/image",
         "prosyslogo.png"
       );
+      // console.log("headerImage",headerImgPath)
 
-      addHeader(doc, orgName, deptName, headerImgPath);
+      addHeader(doc, orgName, deptName, headerImgPath, startDate, endDate);
       let y = 70;
-
-      // doc.fontSize(9).font("Helvetica").text(`${startDate} to ${endDate}`, { align: "left" });
       y += 30;
 
-      // Task Summary Overview
+      //  Step 1: Merge same tasks (multi-assignee -> one task)
+      const mergedTasksMap = new Map();
+      for (const t of deptTasks) {
+        const key = t.task_id || t.row_id;
+        if (!mergedTasksMap.has(key)) {
+          mergedTasksMap.set(key, {
+            ...t,
+            assignee_list: new Set(t.assignee_name ? [t.assignee_name] : []),
+          });
+        } else {
+          const existing = mergedTasksMap.get(key);
+          if (t.assignee_name) existing.assignee_list.add(t.assignee_name);
+        }
+      }
+
+      const mergedTasks = Array.from(mergedTasksMap.values()).map((t) => ({
+        ...t,
+        assignee_name: Array.from(t.assignee_list).join(", "),
+      }));
+
+      //  Step 2: Compute Summary
       let ownSummary = { ongoing: 0, complete: 0, overdue: 0 };
 
       if (deptName.toLowerCase() !== "owner") {
         ownSummary = {
-          ongoing: deptTasks.filter((t) => t.status.toLowerCase() === "ongoing")
-            .length,
-          complete: deptTasks.filter(
-            (t) => t.status.toLowerCase() === "complete"
+          ongoing: mergedTasks.filter(
+            (t) => t.status?.toLowerCase() === "ongoing"
           ).length,
-          overdue: deptTasks.filter((t) => t.status.toLowerCase() === "overdue")
-            .length,
+          complete: mergedTasks.filter(
+            (t) => t.status?.toLowerCase() === "complete"
+          ).length,
+          overdue: mergedTasks.filter(
+            (t) => t.status?.toLowerCase() === "overdue"
+          ).length,
         };
+
         doc
           .fontSize(13)
           .font("Helvetica-Bold")
           .fillColor("#000")
           .text("Task Summary Overview", 40, y);
       } else {
-        // Owner case → total from all departments
         const summaryData = await fetchDepartmentSummary(
           startDate,
           endDate,
@@ -7023,7 +9674,6 @@ async function generateTaskReportPDF(tasks, period, schema) {
         labelHeight = 25,
         spacing = 20;
       let x = MARGIN_RIGHT;
-
       const summaryColors = {
         ongoing: "#1565c0",
         overdue: "#c62828",
@@ -7047,7 +9697,7 @@ async function generateTaskReportPDF(tasks, period, schema) {
       }
       y += labelHeight + 30;
 
-      // User-wise summary (normal department)
+      //  Step 3: User-wise Summary (based on merged tasks)
       if (deptName.toLowerCase() !== "owner") {
         const userGroups = deptTasks.reduce((acc, task) => {
           const user = task.assignee_name || "Unassigned";
@@ -7056,7 +9706,7 @@ async function generateTaskReportPDF(tasks, period, schema) {
           return acc;
         }, {});
 
-        const userSummary = Object.entries(userGroups).map(
+        let userSummary = Object.entries(userGroups).map(
           ([userName, tasks]) => ({
             userName,
             department: tasks[0]?.department_name || "Owner",
@@ -7069,6 +9719,13 @@ async function generateTaskReportPDF(tasks, period, schema) {
           })
         );
 
+        // Sort users: highest overdue first, then ongoing, then name alphabetically
+        userSummary = userSummary.sort((a, b) => {
+          if (b.overdue !== a.overdue) return b.overdue - a.overdue;
+          if (b.ongoing !== a.ongoing) return b.ongoing - a.ongoing;
+          return a.userName.localeCompare(b.userName);
+        });
+
         if (userSummary.length > 0) {
           doc
             .fontSize(13)
@@ -7079,19 +9736,26 @@ async function generateTaskReportPDF(tasks, period, schema) {
 
           const headers = [
             "#",
-            "User Name",
+            "User",
             "Department",
             "Ongoing",
             "Overdue",
-            "Completed",
+            "Complete",
           ];
-          const colWidths = [30, 150, 150, 80, 80, 80];
+          const colWidths = [30, 100, 100, 60, 60, 70];
           y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
 
           userSummary.forEach((user, idx) => {
             if (y > 500) {
               doc.addPage();
-              addHeader(doc, orgName, deptName, headerImgPath);
+              addHeader(
+                doc,
+                orgName,
+                deptName,
+                headerImgPath,
+                startDate,
+                endDate
+              );
               y = 100;
               y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
             }
@@ -7133,8 +9797,8 @@ async function generateTaskReportPDF(tasks, period, schema) {
           .text("All Department Summary", 40, y);
         y += 30;
 
-        const headers = ["#", "Department", "Ongoing", "Overdue", "Completed"];
-        const colWidths = [30, 200, 100, 100, 100];
+        const headers = ["#", "Department", "Ongoing", "Overdue", "Complete"];
+        const colWidths = [30, 100, 60, 60, 70];
         const rowHeight = 25;
 
         y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
@@ -7142,7 +9806,14 @@ async function generateTaskReportPDF(tasks, period, schema) {
         summaryData.forEach((dept, i) => {
           if (y + rowHeight > doc.page.height - 80) {
             doc.addPage();
-            addHeader(doc, orgName, deptName, headerImgPath);
+            addHeader(
+              doc,
+              orgName,
+              deptName,
+              headerImgPath,
+              startDate,
+              endDate
+            );
             y = 100;
             y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
           }
@@ -7172,7 +9843,14 @@ async function generateTaskReportPDF(tasks, period, schema) {
         for (const dept of summaryData) {
           if (y > 500) {
             doc.addPage();
-            addHeader(doc, orgName, deptName, headerImgPath);
+            addHeader(
+              doc,
+              orgName,
+              deptName,
+              headerImgPath,
+              startDate,
+              endDate
+            );
             y = 100;
           }
 
@@ -7199,7 +9877,8 @@ async function generateTaskReportPDF(tasks, period, schema) {
                 WHERE 
                     t.organizationid = '${organizationid}'
                     AND d.department_name = '${dept.department_name}'
-                    AND t.completion_date BETWEEN '${startDate}' AND '${endDate}'
+                    AND  t.cr_on::date BETWEEN '${startDate}' AND '${endDate}'
+                    AND (u.activestatus = 0 OR u.activestatus IS NULL)
             )
             SELECT
                 user_name,
@@ -7222,20 +9901,21 @@ async function generateTaskReportPDF(tasks, period, schema) {
             continue;
           }
 
-          const userHeaders = [
-            "#",
-            "User Name",
-            "Ongoing",
-            "Overdue",
-            "Completed",
-          ];
-          const userColWidths = [30, 200, 100, 100, 100];
+          const userHeaders = ["#", "User", "Ongoing", "Overdue", "Complete"];
+          const userColWidths = [30, 100, 60, 60, 70];
           y = drawTableHeader(doc, userHeaders, userColWidths, MARGIN_RIGHT, y);
 
           userSummary.forEach((u, i) => {
             if (y > 520) {
               doc.addPage();
-              addHeader(doc, orgName, deptName, headerImgPath);
+              addHeader(
+                doc,
+                orgName,
+                deptName,
+                headerImgPath,
+                startDate,
+                endDate
+              );
               y = 100;
               y = drawTableHeader(
                 doc,
@@ -7269,109 +9949,343 @@ async function generateTaskReportPDF(tasks, period, schema) {
         }
       }
 
-      // ===== TASK DETAILS TABLE =====
       const headers = [
         "#",
-        "Title",
-        "Due",
-        "Assignee",
-        "Assigned",
-        "CompletionDate",
+        "Title/Description",
+        "Due Day",
+        "Assignee To",
+        "Assigned By",
+        "Due Date",
         "Frequency",
+        "Created On",
       ];
-      const colWidths = [30, 220, 40, 80, 80, 100, 80];
+      const colWidths = [30, 220, 60, 80, 80, 60, 80, 70];
 
-      const statusGroups = deptTasks.reduce((acc, t) => {
-        const s = (t.status || "unknown").toLowerCase().trim();
-        if (!acc[s]) acc[s] = [];
-        acc[s].push(t);
-        return acc;
-      }, {});
+      // CASE 1: Normal Department (non-owner)
+      if (deptName.toLowerCase() !== "owner") {
+        const statusGroups = mergedTasks.reduce((acc, t) => {
+          const s = (t.status || "unknown").toLowerCase().trim();
+          if (!acc[s]) acc[s] = [];
+          acc[s].push(t);
+          return acc;
+        }, {});
 
-      for (const [statusName, statusTasks] of Object.entries(statusGroups)) {
-        if (y > 500) {
-          doc.addPage();
-          addHeader(doc, orgName, deptName, headerImgPath);
-          y = 100;
-        }
-
-        const count = statusTasks.length;
-        const color =
-          statusName === "ongoing"
-            ? "#1565c0"
-            : statusName === "complete"
-            ? "#2e7d32"
-            : "#c62828";
-        doc
-          .fontSize(12)
-          .font("Helvetica-Bold")
-          .fillColor(color)
-          .text(`${statusName.toUpperCase()} (${count})`, 40, y);
-        y += 25;
-
-        y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
-
-        for (let i = 0; i < statusTasks.length; i++) {
-          const t = statusTasks[i];
-          const description = t.description || "";
-          const descHeight = description
-            ? doc.heightOfString(description, { width: colWidths[1] - 10 })
-            : 0;
-          const totalRowHeight = 25 + descHeight + 10;
-
-          if (y + totalRowHeight > doc.page.height - 80) {
+        for (const [statusName, statusTasks] of Object.entries(statusGroups)) {
+          if (y > 500) {
             doc.addPage();
-            addHeader(doc, orgName, deptName, headerImgPath);
+            addHeader(
+              doc,
+              orgName,
+              deptName,
+              headerImgPath,
+              startDate,
+              endDate
+            );
             y = 100;
-            y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
           }
 
-          const rowColor = i % 2 === 0 ? "#f9f9f9" : "#ffffff";
-          // let rowData = [
-          //   i + 1,
-          //   t.title + (description ? `\n${description}` : ""),
-          //   t.due_days || 0,
-          //   t.assignee_name || "",
-          //   t.assigner_name || "",
-          //   t.completion_date ? new Date(t.completion_date).toLocaleDateString("en-IN") : "",
-          //   t.task_type_title || "",
-          // ];
-          // y = drawTableRow(doc, rowData, colWidths, MARGIN_RIGHT, y, totalRowHeight, rowColor);
+          const count = statusTasks.length;
+          const color =
+            statusName === "ongoing"
+              ? "#1565c0"
+              : statusName === "complete"
+              ? "#2e7d32"
+              : "#c62828";
 
-          const dueLabel =
-            t.due_days < 0
-              ? `Overdue by ${Math.abs(t.due_days)} day(s)`
-              : `Due in ${t.due_days} day(s)`;
+          doc
+            .fontSize(12)
+            .font("Helvetica-Bold")
+            .fillColor(color)
+            .text(`${statusName.toUpperCase()} (${count})`, 40, y);
+          y += 25;
 
-          let rowData = [
-            i + 1,
-            t.title + (description ? `\n${description}` : ""),
-            dueLabel, // <-- updated here
-            t.assignee_name || "",
-            t.assigner_name || "",
-            t.completion_date
-              ? new Date(t.completion_date).toLocaleDateString("en-IN")
-              : "",
-            t.task_type_title || "",
-          ];
-          y = drawTableRow(
+          y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
+
+          for (let i = 0; i < statusTasks.length; i++) {
+            const t = statusTasks[i];
+            const description = t.description || "";
+            const descHeight = description
+              ? doc.heightOfString(description, { width: colWidths[1] - 10 })
+              : 0;
+            const totalRowHeight = 25 + descHeight + 10;
+
+            if (y + totalRowHeight > doc.page.height - 80) {
+              doc.addPage();
+              addHeader(
+                doc,
+                orgName,
+                deptName,
+                headerImgPath,
+                startDate,
+                endDate
+              );
+              y = 100;
+              y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
+            }
+
+            const rowColor = i % 2 === 0 ? "#f9f9f9" : "#ffffff";
+
+            let dueLabel = "-";
+            if (t.due_label === "completed") {
+              dueLabel = `Done ${t.due_days} day(s) later`;
+            } else if (t.due_label === "overdue_by") {
+              dueLabel = `Overdue by ${Math.abs(t.due_days)} day(s)`;
+            } else if (t.due_label === "due_in") {
+              dueLabel = `Due in ${t.due_days} day(s)`;
+            }
+
+            const rowData = [
+              i + 1,
+              t.title + (description ? `\n${description}` : ""),
+              dueLabel,
+              t.assignee_name || "",
+              t.assigner_name || "",
+              t.completion_date
+                ? new Date(t.completion_date).toLocaleDateString("en-IN")
+                : "",
+              t.task_type_title || "",
+              Dateformatechange(t.cr_on),
+            ];
+
+            y = drawTableRow(
+              doc,
+              rowData,
+              colWidths,
+              MARGIN_RIGHT,
+              y,
+              totalRowHeight,
+              rowColor
+            );
+          }
+          y += 20;
+        }
+      }
+
+      // CASE 2: OWNER – show Owner’s tasks + All Dept tasks separately
+      else {
+        // OWNER’s OWN TASKS
+        const ownerTasks = deptGroups["Owner"] || [];
+        const mergedOwnerMap = new Map();
+        for (const t of ownerTasks) {
+          const key = t.task_id || t.row_id;
+          if (!mergedOwnerMap.has(key)) {
+            mergedOwnerMap.set(key, {
+              ...t,
+              assignee_list: new Set(t.assignee_name ? [t.assignee_name] : []),
+            });
+          } else {
+            const existing = mergedOwnerMap.get(key);
+            if (t.assignee_name) existing.assignee_list.add(t.assignee_name);
+          }
+        }
+
+        const mergedOwnerTasks = Array.from(mergedOwnerMap.values()).map(
+          (t) => ({
+            ...t,
+            assignee_name: Array.from(t.assignee_list).join(", "),
+          })
+        );
+
+        if (mergedOwnerTasks.length > 0) {
+          doc
+            .fontSize(13)
+            .font("Helvetica-Bold")
+            .fillColor("#000000")
+            .text("OWNER'S OWN TASKS", 40, y);
+          y += 25;
+
+          const statusGroups = mergedOwnerTasks.reduce((acc, t) => {
+            const s = (t.status || "unknown").toLowerCase().trim();
+            if (!acc[s]) acc[s] = [];
+            acc[s].push(t);
+            return acc;
+          }, {});
+
+          y = drawStatusGroups(
             doc,
-            rowData,
+            statusGroups,
+            headers,
             colWidths,
             MARGIN_RIGHT,
             y,
-            totalRowHeight,
-            rowColor
+            orgName,
+            deptName,
+            headerImgPath
           );
         }
 
-        y += 20;
+        y += 30;
+
+        //  ALL DEPARTMENTS TASKS
+        doc
+          .fontSize(13)
+          .font("Helvetica-Bold")
+          .fillColor("#000000")
+          .text("ALL DEPARTMENTS TASKS", 40, y);
+        y += 25;
+
+        for (const [depName, depTasks] of Object.entries(deptGroups)) {
+          if (depName.toLowerCase() === "owner") continue; // skip owner, already shown
+          if (depTasks.length === 0) continue;
+
+          doc
+            .fontSize(12)
+            .font("Helvetica-Bold")
+            .fillColor("#0d47a1")
+            .text(`Department: ${depName}`, 40, y);
+          y += 20;
+
+          const mergedDepMap = new Map();
+          for (const t of depTasks) {
+            const key = t.task_id || t.row_id;
+            if (!mergedDepMap.has(key)) {
+              mergedDepMap.set(key, {
+                ...t,
+                assignee_list: new Set(
+                  t.assignee_name ? [t.assignee_name] : []
+                ),
+              });
+            } else {
+              const existing = mergedDepMap.get(key);
+              if (t.assignee_name) existing.assignee_list.add(t.assignee_name);
+            }
+          }
+
+          const mergedDepTasks = Array.from(mergedDepMap.values()).map((t) => ({
+            ...t,
+            assignee_name: Array.from(t.assignee_list).join(", "),
+          }));
+
+          const statusGroups = mergedDepTasks.reduce((acc, t) => {
+            const s = (t.status || "unknown").toLowerCase().trim();
+            if (!acc[s]) acc[s] = [];
+            acc[s].push(t);
+            return acc;
+          }, {});
+
+          y = drawStatusGroups(
+            doc,
+            statusGroups,
+            headers,
+            colWidths,
+            MARGIN_RIGHT,
+            y,
+            orgName,
+            deptName,
+            headerImgPath
+          );
+          y += 30;
+        }
+      }
+
+      // drawing grouped status tables
+      function drawStatusGroups(
+        doc,
+        statusGroups,
+        headers,
+        colWidths,
+        MARGIN_RIGHT,
+        y,
+        orgName,
+        deptName,
+        headerImgPath
+      ) {
+        for (const [statusName, statusTasks] of Object.entries(statusGroups)) {
+          if (y > 500) {
+            doc.addPage();
+            addHeader(
+              doc,
+              orgName,
+              deptName,
+              headerImgPath,
+              startDate,
+              endDate
+            );
+            y = 100;
+          }
+
+          const count = statusTasks.length;
+          const color =
+            statusName === "ongoing"
+              ? "#1565c0"
+              : statusName === "complete"
+              ? "#2e7d32"
+              : "#c62828";
+          doc
+            .fontSize(12)
+            .font("Helvetica-Bold")
+            .fillColor(color)
+            .text(`${statusName.toUpperCase()} (${count})`, 40, y);
+          y += 25;
+
+          y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
+
+          for (let i = 0; i < statusTasks.length; i++) {
+            const t = statusTasks[i];
+            const description = t.description || "";
+            const descHeight = description
+              ? doc.heightOfString(description, { width: colWidths[1] - 10 })
+              : 0;
+            const totalRowHeight = 25 + descHeight + 10;
+
+            if (y + totalRowHeight > doc.page.height - 80) {
+              doc.addPage();
+              addHeader(
+                doc,
+                orgName,
+                deptName,
+                headerImgPath,
+                startDate,
+                endDate
+              );
+              y = 100;
+              y = drawTableHeader(doc, headers, colWidths, MARGIN_RIGHT, y);
+            }
+
+            const rowColor = i % 2 === 0 ? "#f9f9f9" : "#ffffff";
+            let dueLabel = "-";
+            if (t.due_label === "completed") {
+              dueLabel = `Done ${t.due_days} day(s) later`;
+            } else if (t.due_label === "overdue_by") {
+              dueLabel = `Overdue by ${Math.abs(t.due_days)} day(s)`;
+            } else if (t.due_label === "due_in") {
+              dueLabel = `Due in ${t.due_days} day(s)`;
+            }
+
+            const rowData = [
+              i + 1,
+              t.title + (description ? `\n${description}` : ""),
+              dueLabel,
+              t.assignee_name || "",
+              t.assigner_name || "",
+              t.completion_date
+                ? new Date(t.completion_date).toLocaleDateString("en-IN")
+                : "",
+              t.task_type_title || "",
+              Dateformatechange(t.cr_on),
+            ];
+
+            y = drawTableRow(
+              doc,
+              rowData,
+              colWidths,
+              MARGIN_RIGHT,
+              y,
+              totalRowHeight,
+              rowColor
+            );
+          }
+          y += 20;
+        }
+
+        return y;
       }
 
       doc.end();
       await new Promise((resolve) => writeStream.on("finish", resolve));
 
-      const serverUrl = "http://192.168.137.1:8000/";
+      const serverUrl = "https://prosys.ftisindia.com/";
+      // const serverUrl = "https://5e4f1d94b966.ngrok-free.app/";
       const fileUrl = `${serverUrl}uploads/${organizationid}/${deptName.replace(
         /\s+/g,
         "_"
@@ -7381,10 +10295,12 @@ async function generateTaskReportPDF(tasks, period, schema) {
         department: deptName,
         departmentid: deptTasks[0]?.department_id || null,
         fileUrl,
+        isOwnerReport: deptName.toLowerCase() === "owner",
       });
     }
   }
 
+  // console.log("org----->",orgGroups)
   return reports;
 }
 
@@ -7392,56 +10308,61 @@ async function getOwnerNumber(orgId) {
   const q = `SELECT mobilenumber FROM prosys.users 
              WHERE role=1 AND organizationid='${orgId}' LIMIT 1`;
   const r = await queries.custom_query(q, "OK");
-  console.log("r- getOwnerNumber", r);
+  //   console.log("r- getOwnerNumber", r);
   return r?.[0]?.mobilenumber || null;
 }
 
 async function getDepartmentAdmin(orgId, department) {
+  // console.log("orgId",orgId,"departments",department)
   const q = `SELECT mobilenumber FROM prosys.users 
              WHERE role=2 AND organizationid='${orgId}' AND deptid='${department}' LIMIT 1`;
   const r = await queries.custom_query(q, "OK");
-  console.log("r - getDepartmentAdmin", r);
+  //   console.log("r - getDepartmentAdmin", r);
   return r?.[0]?.mobilenumber || null;
 }
 
 async function sendReportsToWA(reports) {
   for (const report of reports) {
     const ownerNumber = await getOwnerNumber(report.organizationid);
-    console.log("ownerNumber---", ownerNumber);
+    // console.log("ownerNumber--->", ownerNumber);
+    // console.log("report",report)
     const deptAdminNumber = await getDepartmentAdmin(
       report.organizationid,
-      report.department
+      report.departmentid
     );
 
-    console.log("deptAdminNumber---", deptAdminNumber);
+    // console.log("deptAdminNumber--->", deptAdminNumber);
 
     const templateData = {
       templateName: "task_report_with_pdf",
       languageCode: "en",
-      filename: `${report.department}_${report.period}_report.pdf`,
-      variable: [
-        report.department,
-        report.period,
-        "Please find attached your task summary report.",
-      ],
+      filename: `${report.department}_report.pdf`,
+      variable: [],
     };
 
-    // Send to Owner
-    if (ownerNumber) {
+    // const baseUrlPrefix = 'https://5e4f1d94b966.ngrok-free.app/';
+    const baseUrlPrefix = "https://prosys.ftisindia.com/";
+
+    if (report.isOwnerReport && ownerNumber) {
+      // Send only to owner
       await connect_acube24.sendTemplateDocument(
         ownerNumber,
         templateData,
-        report.fileUrl
+        // report.fileUrl.slice(36, 200)
+        // report.fileUrl.slice(29, 200)
+        report.fileUrl.replace(baseUrlPrefix, "")
       );
-    }
-
-    // Send to Department Admin
-    if (deptAdminNumber) {
+      console.log(` Sent Owner Report to ${ownerNumber}`);
+    } else if (!report.isOwnerReport && deptAdminNumber) {
+      // Send only to department admin
       await connect_acube24.sendTemplateDocument(
         deptAdminNumber,
         templateData,
-        report.fileUrl
+        // report.fileUrl.slice(36, 200)
+        // report.fileUrl.slice(29, 200)
+        report.fileUrl.replace(baseUrlPrefix, "")
       );
+      console.log(` Sent Department Report to ${deptAdminNumber}`);
     }
   }
 
@@ -7452,8 +10373,8 @@ async function processTaskReport(period) {
   console.log("Generating", period, "reports...");
 
   const tasks = await fetchTaskSummary(period);
-  const reports = await generateTaskReportPDF(tasks, period); // returns [{fileUrl,...}]
-  console.log(reports);
+  const reports = await generateTaskReportPDF(tasks, period);
+  // console.log(reports);
 
   console.log("Sending WhatsApp messages...");
   await sendReportsToWA(reports);
@@ -7461,18 +10382,21 @@ async function processTaskReport(period) {
   console.log("Finished sending", period, "reports");
 }
 
-// // Weekly Every Monday 9AM
-// cron.schedule("0 9 * * 1", async () => {
-//     await processTaskReport("weekly");
-// });
-
-// // Monthly Every 1st at 9AM
-// cron.schedule("0 9 1 * *", async () => {
-//     await processTaskReport("monthly");
-// });
-
-async function runCronfun1() {
+async function processWeeklytasks() {
   await processTaskReport("weekly");
 }
 
-runCronfun1();
+async function processMonthlytasks() {
+  await processTaskReport("monthly");
+}
+
+// cron for weekly and monthly
+// runCron.runWeeklyAt9(processWeeklytasks);
+// runCron.runMonthlyAt9(processMonthlytasks)
+
+// testing
+// async function runCronfun1() {
+//   await processTaskReport("weekly");
+// }
+
+// runCronfun1();
